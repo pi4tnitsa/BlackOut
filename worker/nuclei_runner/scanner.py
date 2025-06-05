@@ -1,4 +1,4 @@
-# nuclei_runner/scanner.py - Сканер Nuclei
+# worker/nuclei_runner/scanner.py - ИСПРАВЛЕННАЯ версия (исправлен синтаксис регулярного выражения)
 import os
 import json
 import subprocess
@@ -178,8 +178,8 @@ class NucleiScanner:
         # Удаляем порт и путь
         host = host.split(':')[0].split('/')[0]
         
-        # Проверяем, является ли это IP-адресом
-        ip_pattern = r'^(?:[0-9]{1,3}\.){3}[0-9]{1,3}
+        # Проверяем, является ли это IP-адресом (ИСПРАВЛЕНО: добавлен закрывающий $)
+        ip_pattern = r'^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$'
         if re.match(ip_pattern, host):
             return host
         

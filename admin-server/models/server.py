@@ -1,7 +1,8 @@
-# models/server.py - Модель серверов
+# admin-server/models/server.py - ИСПРАВЛЕННАЯ версия
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
+import ipaddress
 from flask_login import UserMixin
 
 @dataclass
@@ -59,3 +60,7 @@ class User(UserMixin):
     
     def is_active(self):
         return True
+    
+    def get_id(self):
+        """Метод get_id() обязателен для Flask-Login"""
+        return str(self.id)

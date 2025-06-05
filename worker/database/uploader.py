@@ -1,5 +1,5 @@
-# database/uploader.py - Загрузка результатов в БД
-from typing import Dict, Any, Optional
+# database/uploader.py - ИСПРАВЛЕННАЯ версия с импортом List
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 from .connection import DatabaseConnection
 from utils.logger import get_logger
