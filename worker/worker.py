@@ -1,4 +1,3 @@
-# worker.py - Основной скрипт воркера - ИСПРАВЛЕННАЯ версия
 import os
 import sys
 import time

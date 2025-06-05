@@ -1,4 +1,3 @@
-# config/database.py - Конфигурация базы данных - ИСПРАВЛЕННАЯ версия
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from config.settings import Config
@@ -108,4 +107,5 @@ def init_db(app):
                 logger.info(f"Таблицы в базе {db_name} созданы успешно")
             except Exception as e:
                 logger.error(f"Ошибка создания таблиц в базе {db_name}: {e}")
-                raise
+                # Не прерываем работу приложения, если одна БД недоступна
+                continue

@@ -1,4 +1,3 @@
-# worker-deploy.sh - Скрипт развертывания воркера
 #!/bin/bash
 
 set -e
@@ -11,8 +10,13 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# Чтение параметров
-read -p "Введите IP-адрес центрального сервера: " CENTRAL_SERVER_IP
+# Интерактивный ввод параметров
+if [ -z "$1" ]; then
+    read -p "Введите IP-адрес центрального сервера: " CENTRAL_SERVER_IP
+else
+    CENTRAL_SERVER_IP="$1"
+fi
+
 read -p "Введите ID воркера (уникальный номер): " WORKER_ID
 read -p "Введите hostname воркера: " WORKER_HOSTNAME
 read -p "Выберите базу данных (belarus/russia/kazakhstan): " DATABASE_NAME
@@ -64,8 +68,8 @@ ln -sf /root/go/bin/nuclei /usr/local/bin/nuclei
 nuclei -update-templates
 
 echo "Копирование файлов воркера..."
-# Предполагается, что файлы воркера находятся в текущей директории
-cp -r worker/* "$PROJECT_DIR/"
+# Копируем файлы из текущей директории
+cp -r . "$PROJECT_DIR/"
 chown -R "$USER:$USER" "$PROJECT_DIR"
 
 echo "Создание виртуального окружения Python..."
@@ -82,7 +86,7 @@ database:
   port: 5432
   name: "$DATABASE_NAME"
   user: "worker_${DATABASE_NAME}_${WORKER_ID}"
-  password: "worker_password_change_me"
+  password: "worker_${DATABASE_NAME}_pass_2024!"
 
 worker:
   server_id: $WORKER_ID
@@ -150,20 +154,20 @@ supervisorctl start nuclei-worker
 
 echo "=== Установка воркера завершена ==="
 echo ""
-echo "Воркер Nuclei Scanner установлен и запущен!"
+echo "🎉 Воркер Nuclei Scanner установлен и запущен!"
 echo ""
-echo "Конфигурация:"
-echo "  - Центральный сервер: $CENTRAL_SERVER_IP"
-echo "  - ID воркера: $WORKER_ID"
-echo "  - Hostname: $WORKER_HOSTNAME"
-echo "  - База данных: $DATABASE_NAME"
+echo "📊 Конфигурация:"
+echo "  Центральный сервер: $CENTRAL_SERVER_IP"
+echo "  ID воркера: $WORKER_ID"
+echo "  Hostname: $WORKER_HOSTNAME"
+echo "  База данных: $DATABASE_NAME"
 echo ""
-echo "ВАЖНО! Обязательно:"
-echo "1. Настройте пароль базы данных в config.yaml"
-echo "2. Добавьте этот сервер в центральную панель управления"
-echo "3. Загрузите кастомные шаблоны в /opt/custom-templates"
+echo "🔧 Команды управления:"
+echo "  Статус: supervisorctl status nuclei-worker"
+echo "  Перезапуск: supervisorctl restart nuclei-worker"
+echo "  Логи: tail -f /var/log/nuclei-worker/worker.out.log"
 echo ""
-echo "Команды управления:"
-echo "  - Статус: supervisorctl status nuclei-worker"
-echo "  - Перезапуск: supervisorctl restart nuclei-worker"
-echo "  - Логи: tail -f /var/log/nuclei-worker/worker.out.log"
+echo "⚠️ ВАЖНО!"
+echo "1. Убедитесь, что пароль БД совпадает с настройками центрального сервера"
+echo "2. Добавьте этот сервер через веб-интерфейс центрального сервера"
+echo "3. Проверьте подключение: tail -f /var/log/nuclei-worker/worker.out.log"

@@ -99,13 +99,8 @@ class ServerMonitor:
                 }
                 
             except Exception as e:
-                logger.error(f"Ошибка проверки сервера {server.hostname}: {e}")
-                results[server.id] = {
-                    'server': server,
-                    'status': 'error',
-                    'info': {'error': str(e)},
-                    'last_check': datetime.utcnow()
-                }
+                logger.error(f"Ошибка получения сводки мониторинга: {e}")
+                return {}
         
         return results
     
@@ -160,37 +155,59 @@ class ServerMonitor:
             return {'error': str(e)}
     
     def get_monitoring_summary(self) -> Dict[str, Any]:
-        """Получение сводки мониторинга"""
-        servers = self.db_service.get_servers()
-        
-        summary = {
-            'total_servers': len(servers),
-            'online_servers': 0,
-            'offline_servers': 0,
-            'error_servers': 0,
-            'last_update': datetime.utcnow().isoformat(),
-            'servers_detail': []
-        }
-        
-        for server in servers:
-            status = self._server_statuses.get(server.id, 'unknown')
+        """Получение сводки мониторинга с обработкой ошибок"""
+        try:
+            if not self.db_service:
+                return {
+                    'total_servers': 0,
+                    'online_servers': 0,
+                    'offline_servers': 0,
+                    'error_servers': 0,
+                    'last_update': datetime.utcnow().isoformat(),
+                    'servers_detail': []
+                }
+                
+            servers = self.db_service.get_servers()
             
-            if status == 'online':
-                summary['online_servers'] += 1
-            elif status == 'offline':
-                summary['offline_servers'] += 1
-            else:
-                summary['error_servers'] += 1
+            summary = {
+                'total_servers': len(servers),
+                'online_servers': 0,
+                'offline_servers': 0,
+                'error_servers': 0,
+                'last_update': datetime.utcnow().isoformat(),
+                'servers_detail': []
+            }
             
-            summary['servers_detail'].append({
-                'id': server.id,
-                'hostname': server.hostname,
-                'ip_address': server.ip_address,
-                'status': status,
-                'last_seen': server.last_seen.isoformat() if server.last_seen else None
-            })
-        
-        return summary
+            for server in servers:
+                status = getattr(server, 'status', 'unknown')
+                
+                if status == 'online':
+                    summary['online_servers'] += 1
+                elif status == 'offline':
+                    summary['offline_servers'] += 1
+                else:
+                    summary['error_servers'] += 1
+                
+                summary['servers_detail'].append({
+                    'id': getattr(server, 'id', 0),
+                    'hostname': getattr(server, 'hostname', 'unknown'),
+                    'ip_address': getattr(server, 'ip_address', 'unknown'),
+                    'status': status,
+                    'last_seen': getattr(server, 'last_seen', None)
+                })
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения сводки мониторинга: {e}")
+            return {
+                'total_servers': 0,
+                'online_servers': 0,
+                'offline_servers': 0,
+                'error_servers': 0,
+                'last_update': datetime.utcnow().isoformat(),
+                'servers_detail': []
+            }
     
     def _monitoring_loop(self):
         """Основной цикл мониторинга"""

@@ -6,6 +6,9 @@ from typing import List, Dict, Any, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from models.server import Server
 from utils.logger import get_logger
+from dataclasses import dataclass
+from typing import Optional
+from datetime import datetime
 
 logger = get_logger(__name__)
 
@@ -294,3 +297,38 @@ class SSHService:
         except Exception as e:
             logger.error(f"Ошибка создания SSH подключения к {server.hostname}: {e}")
             return None
+        
+@dataclass
+class Vulnerability:
+    """Модель уязвимости"""
+    id: Optional[int] = None
+    ip_address: str = ""
+    template_method: Optional[str] = None
+    connection_method: Optional[str] = None
+    severity_level: Optional[str] = None
+    url: Optional[str] = None
+    additional_info: Optional[str] = None
+    source_host_id: Optional[int] = None
+    timestamp: Optional[datetime] = None
+    
+    def __post_init__(self):
+        """Валидация данных после инициализации"""
+        # Валидация IP адреса (упрощенная)
+        if self.ip_address and self.ip_address != "unknown":
+            try:
+                import ipaddress
+                ipaddress.ip_address(self.ip_address)
+            except ValueError:
+                # Если не IP-адрес, проверяем что это не пустая строка
+                if not self.ip_address.strip():
+                    self.ip_address = "unknown"
+        
+        # Валидация уровня критичности
+        valid_levels = ['info', 'low', 'medium', 'high', 'critical']
+        if self.severity_level and self.severity_level not in valid_levels:
+            logger.warning(f"Неизвестный уровень критичности: {self.severity_level}")
+            self.severity_level = 'info'
+        
+        # Установка временной метки по умолчанию
+        if not self.timestamp:
+            self.timestamp = datetime.utcnow()

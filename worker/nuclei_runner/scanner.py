@@ -12,20 +12,24 @@ class NucleiScanner:
     """Класс для запуска Nuclei сканирования"""
     
     def __init__(self, nuclei_config: Dict[str, Any]):
-        self.binary_path = nuclei_config['binary_path']
-        self.templates_path = nuclei_config['templates_path']
-        self.rate_limit = nuclei_config['rate_limit']
-        self.timeout = nuclei_config['timeout']
-        self.retries = nuclei_config['retries']
-        self.threads = nuclei_config['threads']
+        self.binary_path = nuclei_config.get('binary_path', '/usr/local/bin/nuclei')
+        self.templates_path = nuclei_config.get('templates_path', '/opt/custom-templates')
+        self.rate_limit = nuclei_config.get('rate_limit', 100)
+        self.timeout = nuclei_config.get('timeout', 30)
+        self.retries = nuclei_config.get('retries', 2)
+        self.threads = nuclei_config.get('threads', 50)
         
         # Проверяем доступность Nuclei
         if not self.check_nuclei_availability():
-            raise RuntimeError("Nuclei недоступен")
-    
+            logger.warning("Nuclei недоступен при инициализации")
+
     def check_nuclei_availability(self) -> bool:
         """Проверка доступности Nuclei"""
         try:
+            if not os.path.exists(self.binary_path):
+                logger.error(f"Бинарный файл Nuclei не найден: {self.binary_path}")
+                return False
+                
             result = subprocess.run(
                 [self.binary_path, '-version'],
                 capture_output=True,
@@ -41,6 +45,12 @@ class NucleiScanner:
                 logger.error(f"Ошибка проверки Nuclei: {result.stderr}")
                 return False
                 
+        except FileNotFoundError:
+            logger.error(f"Nuclei не найден: {self.binary_path}")
+            return False
+        except subprocess.TimeoutExpired:
+            logger.error("Таймаут при проверке Nuclei")
+            return False
         except Exception as e:
             logger.error(f"Ошибка проверки доступности Nuclei: {e}")
             return False

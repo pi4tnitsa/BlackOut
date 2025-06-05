@@ -5,6 +5,7 @@ from services.database_service import DatabaseService
 from services.server_monitor import ServerMonitor
 from utils.logger import get_logger
 from datetime import datetime, timedelta
+import os
 
 logger = get_logger(__name__)
 dashboard_bp = Blueprint('dashboard', __name__)
@@ -13,30 +14,45 @@ dashboard_bp = Blueprint('dashboard', __name__)
 db_service = DatabaseService()
 server_monitor = ServerMonitor()
 
+try:
+    db_service = DatabaseService()
+    server_monitor = ServerMonitor()
+except Exception as e:
+    logger.error(f"Ошибка инициализации сервисов: {e}")
+    db_service = None
+    server_monitor = None
+
 @dashboard_bp.route('/dashboard')
 @login_required
 def index():
     """Главная страница дашборда"""
     try:
+        if not db_service:
+            return render_template('dashboard.html', error="Ошибка подключения к БД")
+            
         # Получаем статистику уязвимостей
         vuln_stats = db_service.get_vulnerability_stats()
         
         # Получаем информацию о серверах
         servers = db_service.get_servers()
-        server_summary = server_monitor.get_monitoring_summary()
+        
+        if server_monitor:
+            server_summary = server_monitor.get_monitoring_summary()
+        else:
+            server_summary = {'total_servers': 0, 'online_servers': 0, 'offline_servers': 0}
         
         # Получаем последние задачи
-        recent_tasks = db_service.get_tasks()[:10]
+        recent_tasks = db_service.get_tasks()[:10] if db_service else []
         
         # Получаем последние уязвимости
-        recent_vulnerabilities = db_service.get_vulnerabilities(limit=10)
+        recent_vulnerabilities = db_service.get_vulnerabilities(limit=10) if db_service else []
         
         context = {
-            'vuln_stats': vuln_stats,
+            'vuln_stats': vuln_stats or {},
             'server_summary': server_summary,
             'recent_tasks': recent_tasks,
             'recent_vulnerabilities': recent_vulnerabilities,
-            'total_servers': len(servers),
+            'total_servers': len(servers) if servers else 0,
             'current_time': datetime.utcnow()
         }
         
@@ -45,6 +61,7 @@ def index():
     except Exception as e:
         logger.error(f"Ошибка загрузки дашборда: {e}")
         return render_template('dashboard.html', error="Ошибка загрузки данных")
+
 
 @dashboard_bp.route('/api/stats')
 @login_required

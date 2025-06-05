@@ -12,26 +12,42 @@ class DatabaseConnection:
     def __init__(self, db_config: Dict[str, Any]):
         self.config = db_config
         self.connection = None
+        
+        # Проверяем наличие всех необходимых параметров
+        required_params = ['host', 'port', 'name', 'user', 'password']
+        for param in required_params:
+            if param not in db_config:
+                raise ValueError(f"Отсутствует обязательный параметр БД: {param}")
+        
         self._connect()
     
     def _connect(self):
         """Установка соединения с базой данных"""
         try:
+            import psycopg2
+            import psycopg2.extras
+            
             self.connection = psycopg2.connect(
                 host=self.config['host'],
                 port=self.config['port'],
                 database=self.config['name'],
                 user=self.config['user'],
                 password=self.config['password'],
-                cursor_factory=psycopg2.extras.RealDictCursor
+                cursor_factory=psycopg2.extras.RealDictCursor,
+                connect_timeout=30
             )
             
             # Проверяем подключение
             with self.connection.cursor() as cursor:
                 cursor.execute('SELECT 1')
-            
-            logger.info(f"Подключение к базе данных {self.config['name']} установлено")
-            
+                result = cursor.fetchone()
+                if result:
+                    logger.info(f"Подключение к базе данных {self.config['name']} установлено")
+                
+        except ImportError:
+            logger.error("Модуль psycopg2 не установлен")
+            self.connection = None
+            raise
         except Exception as e:
             logger.error(f"Ошибка подключения к базе данных: {e}")
             self.connection = None
