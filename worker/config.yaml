@@ -1,0 +1,27 @@
+# config.yaml - Конфигурация воркера
+database:
+  host: "your_database_host"
+  port: 5432
+  name: "belarus"  # или russia, kazakhstan
+  user: "worker_user_belarus"
+  password: "worker_password"
+
+worker:
+  server_id: 1  # Уникальный ID этого воркера
+  hostname: "worker-01"
+  check_interval: 30  # Интервал проверки новых задач (секунды)
+  max_concurrent_scans: 3  # Максимум одновременных сканирований
+
+nuclei:
+  binary_path: "/usr/local/bin/nuclei"
+  templates_path: "/opt/custom-templates"
+  rate_limit: 100  # Запросов в секунду
+  timeout: 30      # Таймаут соединения
+  retries: 2       # Количество повторов
+  threads: 50      # Количество потоков
+
+logging:
+  level: "INFO"
+  file: "/var/log/nuclei-worker.log"
+  max_size_mb: 100
+  backup_count: 5

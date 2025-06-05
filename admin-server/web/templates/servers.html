@@ -1,0 +1,297 @@
+<!-- web/templates/servers.html - Управление серверами -->
+{% extends "base.html" %}
+
+{% block title %}Серверы - Nuclei Scanner{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2"><i class="fas fa-server"></i> Управление серверами</h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <div class="btn-group me-2">
+            <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addServerModal">
+                <i class="fas fa-plus"></i> Добавить сервер
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="refreshServers()">
+                <i class="fas fa-sync-alt"></i> Обновить
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Список серверов -->
+<div class="row">
+    {% for server in servers %}
+        <div class="col-lg-6 col-xl-4 mb-4">
+            <div class="card shadow h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="m-0 font-weight-bold">{{ server.hostname }}</h6>
+                    <span class="badge bg-{{ 'success' if server.current_status == 'online' else 'danger' if server.current_status == 'offline' else 'secondary' }}">
+                        {{ server.current_status.upper() }}
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <small class="text-muted">IP-адрес:</small><br>
+                        <strong>{{ server.ip_address }}</strong>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <small class="text-muted">SSH порт:</small><br>
+                        <strong>{{ server.ssh_port }}</strong>
+                    </div>
+                    
+                    {% if server.status_info %}
+                        <div class="mb-3">
+                            <small class="text-muted">Системная информация:</small><br>
+                            {% if server.status_info.cpu_usage %}
+                                <small>CPU: {{ server.status_info.cpu_usage }}%</small><br>
+                            {% endif %}
+                            {% if server.status_info.memory_usage %}
+                                <small>RAM: {{ server.status_info.memory_usage }}%</small><br>
+                            {% endif %}
+                            {% if server.status_info.nuclei_version %}
+                                <small>Nuclei: {{ server.status_info.nuclei_version }}</small>
+                            {% endif %}
+                        </div>
+                    {% endif %}
+                    
+                    <div class="mb-3">
+                        <small class="text-muted">Последняя активность:</small><br>
+                        <small>{{ server.last_seen.strftime('%Y-%m-%d %H:%M:%S') if server.last_seen else 'Никогда' }}</small>
+                    </div>
+                </div>
+                <div class="card-footer">
+                    <div class="btn-group btn-group-sm w-100" role="group">
+                        <button type="button" class="btn btn-outline-info" onclick="showServerDetails({{ server.id }})">
+                            <i class="fas fa-info-circle"></i>
+                        </button>
+                        <button type="button" class="btn btn-outline-success" onclick="installNuclei({{ server.id }})">
+                            <i class="fas fa-download"></i>
+                        </button>
+                        <button type="button" class="btn btn-outline-warning" onclick="updateTemplates({{ server.id }})">
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+                        <button type="button" class="btn btn-outline-primary" onclick="showTerminal({{ server.id }})">
+                            <i class="fas fa-terminal"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    {% endfor %}
+</div>
+
+<!-- Модальное окно добавления сервера -->
+<div class="modal fade" id="addServerModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Добавить новый сервер</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('servers.add_server') }}">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="hostname" class="form-label">Имя хоста</label>
+                        <input type="text" class="form-control" id="hostname" name="hostname" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="ip_address" class="form-label">IP-адрес</label>
+                        <input type="text" class="form-control" id="ip_address" name="ip_address" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="ssh_port" class="form-label">SSH порт</label>
+                        <input type="number" class="form-control" id="ssh_port" name="ssh_port" value="22" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Добавить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно деталей сервера -->
+<div class="modal fade" id="serverDetailsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Детали сервера</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="serverDetailsContent">
+                    <div class="text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Загрузка...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно терминала -->
+<div class="modal fade" id="terminalModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Терминал сервера</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="command" class="form-label">Команда:</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="command" placeholder="Введите команду...">
+                        <button class="btn btn-primary" type="button" onclick="executeCommand()">
+                            <i class="fas fa-play"></i> Выполнить
+                        </button>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Результат:</label>
+                    <pre id="commandOutput" class="bg-dark text-light p-3" style="height: 300px; overflow-y: scroll;">Результат команды появится здесь...</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentServerId = null;
+
+function refreshServers() {
+    location.reload();
+}
+
+function showServerDetails(serverId) {
+    currentServerId = serverId;
+    
+    fetch(`/servers/api/${serverId}/status`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const metrics = data.metrics;
+                let html = '<div class="row">';
+                
+                for (const [key, value] of Object.entries(metrics)) {
+                    if (key !== 'server_id' && key !== 'hostname' && key !== 'collected_at') {
+                        html += `
+                            <div class="col-md-6 mb-3">
+                                <strong>${key.replace(/_/g, ' ').toUpperCase()}:</strong><br>
+                                <span class="text-muted">${value}</span>
+                            </div>
+                        `;
+                    }
+                }
+                
+                html += '</div>';
+                document.getElementById('serverDetailsContent').innerHTML = html;
+            } else {
+                document.getElementById('serverDetailsContent').innerHTML = 
+                    `<div class="alert alert-danger">Ошибка: ${data.error}</div>`;
+            }
+        })
+        .catch(error => {
+            document.getElementById('serverDetailsContent').innerHTML = 
+                `<div class="alert alert-danger">Ошибка загрузки данных: ${error}</div>`;
+        });
+    
+    new bootstrap.Modal(document.getElementById('serverDetailsModal')).show();
+}
+
+function installNuclei(serverId) {
+    if (confirm('Установить Nuclei на сервер? Это может занять несколько минут.')) {
+        fetch(`/servers/api/${serverId}/install-nuclei`, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Nuclei успешно установлен!');
+                refreshServers();
+            } else {
+                alert(`Ошибка установки: ${data.error}`);
+            }
+        })
+        .catch(error => {
+            alert(`Ошибка: ${error}`);
+        });
+    }
+}
+
+function updateTemplates(serverId) {
+    if (confirm('Обновить шаблоны Nuclei на сервере?')) {
+        fetch(`/servers/api/${serverId}/update-templates`, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Шаблоны успешно обновлены!');
+            } else {
+                alert(`Ошибка обновления: ${data.error}`);
+            }
+        })
+        .catch(error => {
+            alert(`Ошибка: ${error}`);
+        });
+    }
+}
+
+function showTerminal(serverId) {
+    currentServerId = serverId;
+    document.getElementById('command').value = '';
+    document.getElementById('commandOutput').textContent = 'Результат команды появится здесь...';
+    new bootstrap.Modal(document.getElementById('terminalModal')).show();
+}
+
+function executeCommand() {
+    const command = document.getElementById('command').value.trim();
+    if (!command) {
+        alert('Введите команду!');
+        return;
+    }
+    
+    const outputElement = document.getElementById('commandOutput');
+    outputElement.textContent = 'Выполнение команды...';
+    
+    fetch(`/servers/api/${currentServerId}/execute-command`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ command: command })
+    })
+    .then(response => response.json())
+    .then(data => {
+        let output = '';
+        if (data.success) {
+            output = `STDOUT:\n${data.stdout}\n`;
+            if (data.stderr) {
+                output += `\nSTDERR:\n${data.stderr}`;
+            }
+        } else {
+            output = `ОШИБКА: ${data.error}`;
+        }
+        outputElement.textContent = output;
+    })
+    .catch(error => {
+        outputElement.textContent = `Ошибка выполнения: ${error}`;
+    });
+}
+
+// Enter для выполнения команды
+document.getElementById('command').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+        executeCommand();
+    }
+});
+</script>
+{% endblock %}

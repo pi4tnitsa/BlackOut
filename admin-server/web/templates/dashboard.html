@@ -1,0 +1,294 @@
+<!-- web/templates/dashboard.html - Главная панель -->
+{% extends "base.html" %}
+
+{% block title %}Дашборд - Nuclei Scanner{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2"><i class="fas fa-tachometer-alt"></i> Дашборд</h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <div class="btn-group me-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="refreshStats()">
+                <i class="fas fa-sync-alt"></i> Обновить
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Статистические карточки -->
+<div class="row mb-4">
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card border-left-primary shadow h-100 py-2 card-stats">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                            Всего уязвимостей
+                        </div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">
+                            {{ vuln_stats.total or 0 }}
+                        </div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-bug fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card border-left-danger shadow h-100 py-2 card-stats">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-danger text-uppercase mb-1">
+                            Критические
+                        </div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">
+                            {{ vuln_stats.critical or 0 }}
+                        </div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-exclamation-triangle fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card border-left-success shadow h-100 py-2 card-stats">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                            Серверы онлайн
+                        </div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">
+                            {{ server_summary.online_servers or 0 }} / {{ total_servers or 0 }}
+                        </div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-server fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card border-left-info shadow h-100 py-2 card-stats">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                            Уникальные IP
+                        </div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">
+                            {{ vuln_stats.unique_ips or 0 }}
+                        </div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-network-wired fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Графики и таблицы -->
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card shadow mb-4">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="fas fa-chart-area"></i> Статистика уязвимостей по дням
+                </h6>
+            </div>
+            <div class="card-body">
+                <canvas id="vulnerabilityChart" width="400" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card shadow mb-4">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="fas fa-chart-pie"></i> Уязвимости по критичности
+                </h6>
+            </div>
+            <div class="card-body">
+                <canvas id="severityChart" width="400" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Последние уязвимости -->
+<div class="row">
+    <div class="col-lg-6">
+        <div class="card shadow mb-4">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="fas fa-clock"></i> Последние уязвимости
+                </h6>
+            </div>
+            <div class="card-body">
+                {% if recent_vulnerabilities %}
+                    {% for vuln in recent_vulnerabilities %}
+                        <div class="vulnerability-card card mb-2 {{ vuln.severity_level }}">
+                            <div class="card-body py-2">
+                                <div class="row align-items-center">
+                                    <div class="col">
+                                        <div class="fw-bold">{{ vuln.ip_address }}</div>
+                                        <small class="text-muted">{{ vuln.template_method }}</small>
+                                    </div>
+                                    <div class="col-auto">
+                                        <span class="badge bg-{{ 'danger' if vuln.severity_level == 'critical' else 'warning' if vuln.severity_level == 'high' else 'info' }}">
+                                            {{ vuln.severity_level.upper() }}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-muted">Уязвимости не найдены</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-6">
+        <div class="card shadow mb-4">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="fas fa-tasks"></i> Последние задачи
+                </h6>
+            </div>
+            <div class="card-body">
+                {% if recent_tasks %}
+                    {% for task in recent_tasks %}
+                        <div class="card mb-2">
+                            <div class="card-body py-2">
+                                <div class="row align-items-center">
+                                    <div class="col">
+                                        <div class="fw-bold">{{ task.name }}</div>
+                                        <small class="text-muted">{{ task.created_at.strftime('%Y-%m-%d %H:%M') if task.created_at }}</small>
+                                    </div>
+                                    <div class="col-auto">
+                                        <span class="badge bg-{{ 'success' if task.status == 'completed' else 'primary' if task.status == 'running' else 'secondary' if task.status == 'pending' else 'danger' }}">
+                                            {{ task.status.upper() }}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-muted">Задачи не найдены</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Обновление статистики
+function refreshStats() {
+    fetch('/dashboard/api/stats')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            }
+        })
+        .catch(error => console.error('Ошибка обновления статистики:', error));
+}
+
+// График уязвимостей по дням
+fetch('/dashboard/api/charts/vulnerabilities')
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const ctx = document.getElementById('vulnerabilityChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: Object.keys(data.chart_data).reverse(),
+                    datasets: [{
+                        label: 'Критические',
+                        data: Object.values(data.chart_data).reverse().map(d => d.critical || 0),
+                        borderColor: '#dc3545',
+                        backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                        tension: 0.4
+                    }, {
+                        label: 'Высокие',
+                        data: Object.values(data.chart_data).reverse().map(d => d.high || 0),
+                        borderColor: '#fd7e14',
+                        backgroundColor: 'rgba(253, 126, 20, 0.1)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        title: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+// График по критичности
+const severityCtx = document.getElementById('severityChart').getContext('2d');
+new Chart(severityCtx, {
+    type: 'doughnut',
+    data: {
+        labels: ['Критические', 'Высокие', 'Средние', 'Низкие', 'Информационные'],
+        datasets: [{
+            data: [
+                {{ vuln_stats.critical or 0 }},
+                {{ vuln_stats.high or 0 }},
+                {{ vuln_stats.medium or 0 }},
+                {{ vuln_stats.low or 0 }},
+                {{ vuln_stats.info or 0 }}
+            ],
+            backgroundColor: [
+                '#dc3545',
+                '#fd7e14',
+                '#ffc107',
+                '#20c997',
+                '#0dcaf0'
+            ]
+        }]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: {
+                position: 'bottom',
+            }
+        }
+    }
+});
+
+// Автообновление каждые 30 секунд
+setInterval(refreshStats, 30000);
+</script>
+{% endblock %}
