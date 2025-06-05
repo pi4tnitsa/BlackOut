@@ -1,0 +1,13 @@
+# requirements.txt
+Flask==2.3.3
+Flask-SQLAlchemy==3.0.5
+Flask-Login==0.6.3
+Flask-WTF==1.1.1
+WTForms==3.0.1
+psycopg2-binary==2.9.7
+paramiko==3.3.1
+requests==2.31.0
+python-dotenv==1.0.0
+celery==5.3.2
+redis==4.6.0
+ipaddress==1.0.23
