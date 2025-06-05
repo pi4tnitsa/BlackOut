@@ -1,4 +1,4 @@
-# worker.py - Основной скрипт воркера
+# worker.py - Основной скрипт воркера - ИСПРАВЛЕННАЯ версия
 import os
 import sys
 import time
@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 
 from nuclei_runner.scanner import NucleiScanner
+from nuclei_runner.parser import NucleiResultParser
 from database.connection import DatabaseConnection
 from database.uploader import ResultUploader
 from utils.logger import setup_logger, get_logger
@@ -20,6 +21,11 @@ class NucleiWorker:
     """Основной класс воркера Nuclei"""
     
     def __init__(self, config_path='config.yaml'):
+        # Проверяем существование файла конфигурации
+        if not os.path.exists(config_path):
+            print(f"Файл конфигурации {config_path} не найден")
+            sys.exit(1)
+            
         # Загрузка конфигурации
         with open(config_path, 'r', encoding='utf-8') as f:
             self.config = yaml.safe_load(f)
@@ -29,9 +35,14 @@ class NucleiWorker:
         self.logger = get_logger(__name__)
         
         # Инициализация компонентов
-        self.db_connection = DatabaseConnection(self.config['database'])
-        self.scanner = NucleiScanner(self.config['nuclei'])
-        self.uploader = ResultUploader(self.db_connection, self.config['worker']['server_id'])
+        try:
+            self.db_connection = DatabaseConnection(self.config['database'])
+            self.scanner = NucleiScanner(self.config['nuclei'])
+            self.parser = NucleiResultParser()
+            self.uploader = ResultUploader(self.db_connection, self.config['worker']['server_id'])
+        except Exception as e:
+            self.logger.error(f"Ошибка инициализации компонентов: {e}")
+            sys.exit(1)
         
         # Флаги управления
         self._running = False
@@ -65,6 +76,8 @@ class NucleiWorker:
             # Основной цикл работы
             self._main_loop()
             
+        except KeyboardInterrupt:
+            self.logger.info("Получен сигнал прерывания от пользователя")
         except Exception as e:
             self.logger.error(f"Критическая ошибка воркера: {e}")
             return False
@@ -145,13 +158,16 @@ class NucleiWorker:
             self._update_task_status(task_id, 'running')
             
             # Выполняем сканирование
-            scan_results = self.scanner.scan_targets(target_ips)
+            scan_output = self.scanner.scan_targets(target_ips)
+            
+            # Парсим результаты
+            vulnerabilities = self.parser.parse_json_output(
+                scan_output, 
+                self.config['worker']['server_id']
+            )
             
             # Загружаем результаты в базу данных
-            uploaded_count = 0
-            for result in scan_results:
-                if self.uploader.upload_vulnerability(result):
-                    uploaded_count += 1
+            uploaded_count = self.uploader.upload_batch_vulnerabilities(vulnerabilities)
             
             # Обновляем статус задачи на завершенную
             self._update_task_status(task_id, 'completed')
@@ -181,13 +197,39 @@ class NucleiWorker:
     def _update_server_status(self, status):
         """Обновление статуса сервера"""
         try:
-            query = """
+            # Сначала пытаемся обновить существующий сервер
+            query_update = """
             UPDATE servers 
             SET status = %s, last_seen = %s 
             WHERE id = %s
             """
             server_id = self.config['worker']['server_id']
-            self.db_connection.execute_query(query, (status, datetime.utcnow(), server_id))
+            result = self.db_connection.execute_query(
+                query_update, 
+                (status, datetime.utcnow(), server_id)
+            )
+            
+            # Если сервер не найден, создаем его
+            if result == 0:
+                query_insert = """
+                INSERT INTO servers (id, hostname, ip_address, ssh_port, status, last_seen, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    last_seen = EXCLUDED.last_seen
+                """
+                self.db_connection.execute_query(
+                    query_insert,
+                    (
+                        server_id,
+                        self.config['worker']['hostname'],
+                        '127.0.0.1',  # Заглушка для IP
+                        22,
+                        status,
+                        datetime.utcnow(),
+                        datetime.utcnow()
+                    )
+                )
             
         except Exception as e:
             self.logger.error(f"Ошибка обновления статуса сервера: {e}")
@@ -216,10 +258,13 @@ class NucleiWorker:
 
 def main():
     """Точка входа"""
-    worker = NucleiWorker()
-    success = worker.start()
-    sys.exit(0 if success else 1)
+    try:
+        worker = NucleiWorker()
+        success = worker.start()
+        sys.exit(0 if success else 1)
+    except Exception as e:
+        print(f"Критическая ошибка: {e}")
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()
-

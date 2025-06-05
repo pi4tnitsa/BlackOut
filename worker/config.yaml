@@ -1,10 +1,10 @@
-# config.yaml - Конфигурация воркера
+# config.yaml -  конфигурации воркера
 database:
-  host: "your_database_host"
+  host: "192.168.1.100"  # IP центрального сервера
   port: 5432
   name: "belarus"  # или russia, kazakhstan
-  user: "worker_user_belarus"
-  password: "worker_password"
+  user: "worker_belarus_1"
+  password: "worker_password_change_me"
 
 worker:
   server_id: 1  # Уникальный ID этого воркера
@@ -22,6 +22,6 @@ nuclei:
 
 logging:
   level: "INFO"
-  file: "/var/log/nuclei-worker.log"
+  file: "/var/log/nuclei-worker/worker.log"
   max_size_mb: 100
   backup_count: 5

@@ -1,9 +1,8 @@
-# worker/nuclei_runner/scanner.py - ИСПРАВЛЕННАЯ версия (исправлен синтаксис регулярного выражения)
+# worker/nuclei_runner/scanner.py - ИСПРАВЛЕННАЯ версия
 import os
-import json
 import subprocess
 import tempfile
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from pathlib import Path
 from utils.logger import get_logger
 
@@ -46,11 +45,11 @@ class NucleiScanner:
             logger.error(f"Ошибка проверки доступности Nuclei: {e}")
             return False
     
-    def scan_targets(self, target_ips: List[str]) -> List[Dict[str, Any]]:
-        """Сканирование списка IP-адресов"""
+    def scan_targets(self, target_ips: List[str]) -> str:
+        """Сканирование списка IP-адресов, возвращает JSON строку"""
         if not target_ips:
             logger.warning("Список целей пуст")
-            return []
+            return ""
         
         logger.info(f"Начало сканирования {len(target_ips)} целей")
         
@@ -65,11 +64,8 @@ class NucleiScanner:
                 # Запускаем Nuclei
                 results = self._run_nuclei_scan(targets_file)
                 
-                # Парсим результаты
-                vulnerabilities = self._parse_results(results)
-                
-                logger.info(f"Сканирование завершено. Найдено уязвимостей: {len(vulnerabilities)}")
-                return vulnerabilities
+                logger.info(f"Сканирование завершено")
+                return results
                 
             finally:
                 # Удаляем временный файл
@@ -80,14 +76,13 @@ class NucleiScanner:
                     
         except Exception as e:
             logger.error(f"Ошибка сканирования: {e}")
-            return []
+            return ""
     
     def _run_nuclei_scan(self, targets_file: str) -> str:
         """Запуск Nuclei сканирования"""
         command = [
             self.binary_path,
             '-l', targets_file,
-            '-t', self.templates_path,
             '-rate-limit', str(self.rate_limit),
             '-timeout', str(self.timeout),
             '-retries', str(self.retries),
@@ -96,6 +91,14 @@ class NucleiScanner:
             '-silent',
             '-no-color'
         ]
+        
+        # Добавляем шаблоны, если директория существует
+        if os.path.exists(self.templates_path) and os.listdir(self.templates_path):
+            command.extend(['-t', self.templates_path])
+        else:
+            logger.warning(f"Директория шаблонов {self.templates_path} пуста или не существует")
+            # Используем встроенные шаблоны Nuclei
+            command.extend(['-t', 'http,ssl,dns'])
         
         logger.debug(f"Команда Nuclei: {' '.join(command)}")
         
@@ -119,75 +122,3 @@ class NucleiScanner:
         except Exception as e:
             logger.error(f"Ошибка запуска Nuclei: {e}")
             raise
-    
-    def _parse_results(self, nuclei_output: str) -> List[Dict[str, Any]]:
-        """Парсинг результатов Nuclei"""
-        vulnerabilities = []
-        
-        if not nuclei_output.strip():
-            return vulnerabilities
-        
-        for line in nuclei_output.strip().split('\n'):
-            if not line.strip():
-                continue
-            
-            try:
-                data = json.loads(line)
-                
-                # Извлекаем IP-адрес из host
-                host = data.get('host', '')
-                ip_address = self._extract_ip_from_host(host)
-                
-                vulnerability = {
-                    'ip_address': ip_address,
-                    'template_method': data.get('template-id', ''),
-                    'connection_method': data.get('type', ''),
-                    'severity_level': data.get('info', {}).get('severity', 'info'),
-                    'url': data.get('matched-at', host),
-                    'additional_info': json.dumps({
-                        'matcher_name': data.get('matcher-name', ''),
-                        'description': data.get('info', {}).get('description', ''),
-                        'tags': data.get('info', {}).get('tags', []),
-                        'reference': data.get('info', {}).get('reference', []),
-                        'classification': data.get('info', {}).get('classification', {}),
-                        'curl_command': data.get('curl-command', ''),
-                        'extracted_results': data.get('extracted-results', [])
-                    }, ensure_ascii=False),
-                    'timestamp': data.get('timestamp', None)
-                }
-                
-                vulnerabilities.append(vulnerability)
-                
-            except json.JSONDecodeError as e:
-                logger.warning(f"Ошибка парсинга JSON: {e}")
-                logger.debug(f"Проблемная строка: {line}")
-                continue
-            except Exception as e:
-                logger.error(f"Ошибка обработки результата: {e}")
-                continue
-        
-        return vulnerabilities
-    
-    def _extract_ip_from_host(self, host: str) -> str:
-        """Извлечение IP-адреса из поля host"""
-        import re
-        
-        # Удаляем протокол
-        host = re.sub(r'^https?://', '', host)
-        
-        # Удаляем порт и путь
-        host = host.split(':')[0].split('/')[0]
-        
-        # Проверяем, является ли это IP-адресом (ИСПРАВЛЕНО: добавлен закрывающий $)
-        ip_pattern = r'^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$'
-        if re.match(ip_pattern, host):
-            return host
-        
-        # Если это доменное имя, пытаемся разрешить его в IP
-        try:
-            import socket
-            ip = socket.gethostbyname(host)
-            return ip
-        except:
-            # Если не удалось разрешить, возвращаем как есть
-            return host

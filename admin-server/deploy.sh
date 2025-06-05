@@ -1,5 +1,5 @@
-# deploy.sh - Скрипт развертывания центрального сервера
 #!/bin/bash
+# deploy.sh - Скрипт развертывания центрального сервера - ИСПРАВЛЕННАЯ версия
 
 set -e
 
@@ -56,36 +56,66 @@ systemctl enable postgresql
 
 # Создание баз данных и пользователей
 sudo -u postgres psql << EOF
--- Создание баз данных
-CREATE DATABASE $DB_NAME_BELARUS;
-CREATE DATABASE $DB_NAME_RUSSIA;
-CREATE DATABASE $DB_NAME_KAZAKHSTAN;
+-- Создание баз данных если не существуют
+SELECT 'CREATE DATABASE $DB_NAME_BELARUS' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$DB_NAME_BELARUS')\gexec
+SELECT 'CREATE DATABASE $DB_NAME_RUSSIA' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$DB_NAME_RUSSIA')\gexec
+SELECT 'CREATE DATABASE $DB_NAME_KAZAKHSTAN' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$DB_NAME_KAZAKHSTAN')\gexec
 
--- Создание администратора
-CREATE USER admin WITH PASSWORD 'admin_password_change_me';
+-- Создание администратора если не существует
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'admin') THEN
+        CREATE USER admin WITH PASSWORD 'admin_password_change_me';
+    END IF;
+END
+\$\$;
+
+-- Предоставление прав администратору
 GRANT ALL PRIVILEGES ON DATABASE $DB_NAME_BELARUS TO admin;
 GRANT ALL PRIVILEGES ON DATABASE $DB_NAME_RUSSIA TO admin;
 GRANT ALL PRIVILEGES ON DATABASE $DB_NAME_KAZAKHSTAN TO admin;
 
--- Создание пользователей для воркеров (примеры)
-CREATE USER worker_belarus_1 WITH PASSWORD 'worker_password_change_me';
-CREATE USER worker_russia_1 WITH PASSWORD 'worker_password_change_me';
-CREATE USER worker_kazakhstan_1 WITH PASSWORD 'worker_password_change_me';
+-- Создание пользователей для воркеров (если не существуют)
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'worker_belarus_1') THEN
+        CREATE USER worker_belarus_1 WITH PASSWORD 'worker_password_change_me';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'worker_russia_1') THEN
+        CREATE USER worker_russia_1 WITH PASSWORD 'worker_password_change_me';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'worker_kazakhstan_1') THEN
+        CREATE USER worker_kazakhstan_1 WITH PASSWORD 'worker_password_change_me';
+    END IF;
+END
+\$\$;
 
 -- Предоставление прав воркерам
 GRANT CONNECT ON DATABASE $DB_NAME_BELARUS TO worker_belarus_1;
 GRANT CONNECT ON DATABASE $DB_NAME_RUSSIA TO worker_russia_1;
 GRANT CONNECT ON DATABASE $DB_NAME_KAZAKHSTAN TO worker_kazakhstan_1;
+EOF
 
-\c $DB_NAME_BELARUS;
-GRANT INSERT ON vulnerabilities TO worker_belarus_1;
-GRANT SELECT ON vulnerabilities TO worker_belarus_1;
-GRANT USAGE, SELECT ON SEQUENCE vulnerabilities_id_seq TO worker_russia_1;
+# Предоставляем права на таблицы (после их создания)
+sudo -u postgres psql -d $DB_NAME_BELARUS << EOF
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO worker_belarus_1;
+GRANT INSERT, SELECT, UPDATE ON ALL TABLES IN SCHEMA public TO worker_belarus_1;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, SELECT, UPDATE ON TABLES TO worker_belarus_1;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO worker_belarus_1;
+EOF
 
-\c $DB_NAME_KAZAKHSTAN;
-GRANT INSERT ON vulnerabilities TO worker_kazakhstan_1;
-GRANT SELECT ON vulnerabilities TO worker_kazakhstan_1;
-GRANT USAGE, SELECT ON SEQUENCE vulnerabilities_id_seq TO worker_kazakhstan_1;
+sudo -u postgres psql -d $DB_NAME_RUSSIA << EOF
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO worker_russia_1;
+GRANT INSERT, SELECT, UPDATE ON ALL TABLES IN SCHEMA public TO worker_russia_1;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, SELECT, UPDATE ON TABLES TO worker_russia_1;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO worker_russia_1;
+EOF
+
+sudo -u postgres psql -d $DB_NAME_KAZAKHSTAN << EOF
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO worker_kazakhstan_1;
+GRANT INSERT, SELECT, UPDATE ON ALL TABLES IN SCHEMA public TO worker_kazakhstan_1;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, SELECT, UPDATE ON TABLES TO worker_kazakhstan_1;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO worker_kazakhstan_1;
 EOF
 
 echo "Настройка Redis..."
@@ -93,8 +123,13 @@ systemctl start redis-server
 systemctl enable redis-server
 
 echo "Копирование файлов проекта..."
-# Предполагается, что файлы проекта находятся в текущей директории
-cp -r admin-server/* "$PROJECT_DIR/"
+# Копируем только содержимое admin-server, если мы в корне проекта
+if [ -d "admin-server" ]; then
+    cp -r admin-server/* "$PROJECT_DIR/"
+else
+    # Если запускаем из директории admin-server
+    cp -r ./* "$PROJECT_DIR/"
+fi
 chown -R "$USER:$USER" "$PROJECT_DIR"
 
 echo "Создание виртуального окружения Python..."
@@ -148,12 +183,12 @@ fi
 
 echo "Инициализация базы данных..."
 cd "$PROJECT_DIR"
-sudo -u "$USER" "$VENV_DIR/bin/python" << EOF
+sudo -u "$USER" "$VENV_DIR/bin/python" -c "
 from app import create_app
 app = create_app()
 with app.app_context():
-    pass  # Таблицы создаются автоматически в init_db
-EOF
+    print('База данных инициализирована')
+"
 
 echo "Настройка Supervisor для управления процессами..."
 cat > /etc/supervisor/conf.d/nuclei-scanner.conf << EOF
@@ -169,19 +204,24 @@ environment=PATH="$VENV_DIR/bin"
 
 [program:nuclei-scanner-monitor]
 command=$VENV_DIR/bin/python -c "
-from services.server_monitor import ServerMonitor
-from services.ssh_service import SSHService
-import os
-monitor = ServerMonitor()
-ssh_service = SSHService(
-    ssh_username=os.getenv('SSH_USERNAME', 'root'),
-    ssh_key_path=os.getenv('SSH_KEY_PATH'),
-    ssh_password=os.getenv('SSH_PASSWORD')
-)
-monitor.set_ssh_service(ssh_service)
-monitor.start_monitoring()
 import time
-while True:
+import os
+os.environ.setdefault('FLASK_ENV', 'production')
+try:
+    from services.server_monitor import ServerMonitor
+    from services.ssh_service import SSHService
+    monitor = ServerMonitor()
+    ssh_service = SSHService(
+        ssh_username=os.getenv('SSH_USERNAME', 'root'),
+        ssh_key_path=os.getenv('SSH_KEY_PATH'),
+        ssh_password=os.getenv('SSH_PASSWORD')
+    )
+    monitor.set_ssh_service(ssh_service)
+    monitor.start_monitoring()
+    while True:
+        time.sleep(60)
+except Exception as e:
+    print(f'Ошибка мониторинга: {e}')
     time.sleep(60)
 "
 directory=$PROJECT_DIR
@@ -233,8 +273,10 @@ if ! command -v go &> /dev/null; then
 fi
 
 export PATH=$PATH:/usr/local/go/bin
-go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-ln -sf /root/go/bin/nuclei /usr/local/bin/nuclei
+if ! command -v nuclei &> /dev/null; then
+    go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+    ln -sf /root/go/bin/nuclei /usr/local/bin/nuclei
+fi
 
 # Обновление шаблонов Nuclei
 nuclei -update-templates
@@ -291,4 +333,4 @@ echo "  - Просмотр статуса: supervisorctl status"
 echo "  - Перезапуск веб: supervisorctl restart nuclei-scanner-web"
 echo "  - Просмотр логов: tail -f /var/log/nuclei-scanner/web.out.log"
 echo ""
-echo "Для настройки воркеров используйте скрипт install.sh из директории worker/"
+echo "Для настройки воркеров используйте скрипт worker-deploy.sh из директории worker/"

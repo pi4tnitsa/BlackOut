@@ -9,8 +9,8 @@ from flask_login import UserMixin
 class Server:
     """Модель сервера-воркера"""
     id: Optional[int] = None
-    hostname: str = None
-    ip_address: str = None
+    hostname: str = ""
+    ip_address: str = ""
     ssh_port: int = 22
     status: str = 'offline'
     last_seen: Optional[datetime] = None
@@ -29,7 +29,7 @@ class Server:
         """Создание объекта из словаря"""
         return cls(
             id=data.get('id'),
-            hostname=data.get('hostname'),
+            hostname=data.get('hostname', ''),
             ip_address=str(data.get('ip_address', '')),
             ssh_port=data.get('ssh_port', 22),
             status=data.get('status', 'offline'),
@@ -45,8 +45,8 @@ class Server:
             'ip_address': self.ip_address,
             'ssh_port': self.ssh_port,
             'status': self.status,
-            'last_seen': self.last_seen,
-            'created_at': self.created_at
+            'last_seen': self.last_seen.isoformat() if self.last_seen else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
 class User(UserMixin):
@@ -64,3 +64,11 @@ class User(UserMixin):
     def get_id(self):
         """Метод get_id() обязателен для Flask-Login"""
         return str(self.id)
+    
+    @staticmethod
+    def get(user_id):
+        """Статический метод для получения пользователя по ID"""
+        if str(user_id) == "1":
+            from config.settings import Config
+            return User(Config.ADMIN_USERNAME)
+        return None

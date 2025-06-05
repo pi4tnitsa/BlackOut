@@ -1,4 +1,4 @@
-# app.py - Точка входа приложения
+# app.py - Точка входа приложения - ИСПРАВЛЕННАЯ версия
 from flask import Flask
 from flask_login import LoginManager
 from config.settings import Config
@@ -10,6 +10,9 @@ def create_app():
     """Создание и настройка Flask приложения"""
     app = Flask(__name__)
     app.config.from_object(Config)
+    
+    # Настройка логирования
+    setup_logger(app)
     
     # Инициализация базы данных
     init_db(app)
@@ -23,13 +26,10 @@ def create_app():
     @login_manager.user_loader
     def load_user(user_id):
         from models.server import User
-        return User.query.get(int(user_id))
+        return User.get(user_id)
     
     # Регистрация маршрутов
     register_routes(app)
-    
-    # Настройка логирования
-    setup_logger(app)
     
     return app
 

@@ -1,4 +1,4 @@
-# config/database.py - Конфигурация базы данных
+# config/database.py - Конфигурация базы данных - ИСПРАВЛЕННАЯ версия
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from config.settings import Config
@@ -15,7 +15,7 @@ class DatabaseManager:
     
     def get_connection(self, database_name):
         """Получение подключения к указанной базе данных"""
-        if database_name not in self.connections:
+        if database_name not in self.connections or self.connections[database_name].closed:
             try:
                 conn = psycopg2.connect(
                     host=self.config['host'],
@@ -51,8 +51,9 @@ class DatabaseManager:
     def close_all_connections(self):
         """Закрытие всех подключений"""
         for name, conn in self.connections.items():
-            conn.close()
-            logger.info(f"Подключение к базе {name} закрыто")
+            if conn and not conn.closed:
+                conn.close()
+                logger.info(f"Подключение к базе {name} закрыто")
         self.connections.clear()
 
 # Глобальный экземпляр менеджера БД

@@ -1,4 +1,4 @@
-# utils/helpers.py - Вспомогательные функции
+# utils/helpers.py - Вспомогательные функции - ИСПРАВЛЕННАЯ версия
 import json
 import hashlib
 from datetime import datetime, timedelta
@@ -89,6 +89,7 @@ def export_vulnerabilities_to_json(vulnerabilities: List[Dict[str, Any]]) -> str
 
 def import_ip_list_from_file(file_content: str) -> List[str]:
     """Импорт списка IP из файла"""
+    from utils.validators import validate_ip_address
     ips = []
     
     for line in file_content.split('\n'):
@@ -107,4 +108,11 @@ def import_ip_list_from_file(file_content: str) -> List[str]:
                         ips.append(match)
     
     return list(set(ips))  # Удаляем дубликаты
-        
+
+def safe_str(value: Any) -> str:
+    """Безопасное преобразование в строку"""
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)

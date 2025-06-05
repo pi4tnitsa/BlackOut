@@ -1,6 +1,7 @@
-# services/task_distributor.py - Распределитель задач сканирования
+# services/task_distributor.py - Распределитель задач сканирования - ИСПРАВЛЕННАЯ версия
 import ipaddress
 import math
+import json
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -139,7 +140,7 @@ class TaskDistributor:
             success_count = 0
             total_vulnerabilities = 0
             
-            def progress_callback(server, result):
+            def process_server_results(server, result):
                 nonlocal total_vulnerabilities
                 if result['success']:
                     # Парсим результаты и сохраняем уязвимости
@@ -148,7 +149,7 @@ class TaskDistributor:
                     
                     for vuln in vulns:
                         vuln_id = self.db_service.save_vulnerability(vuln)
-                        if vuln_id:
+                        if vuln_id and vuln.severity_level in ['critical', 'high']:
                             # Отправляем уведомление о найденной уязвимости
                             self.telegram_service.send_vulnerability_alert(vuln, self.database_name)
             
@@ -161,7 +162,7 @@ class TaskDistributor:
                     
                     if result['success']:
                         success_count += 1
-                        progress_callback(server, result)
+                        process_server_results(server, result)
                     else:
                         logger.error(f"Ошибка сканирования на сервере {server.hostname}: {result['error']}")
             
@@ -247,8 +248,6 @@ nuclei \\
         vulnerabilities = []
         
         try:
-            import json
-            
             for line in output.strip().split('\n'):
                 if not line.strip():
                     continue
@@ -257,8 +256,11 @@ nuclei \\
                     data = json.loads(line)
                     
                     # Извлекаем информацию об уязвимости
+                    host = data.get('host', '')
+                    ip_address = self._extract_ip_from_host(host)
+                    
                     vuln = Vulnerability(
-                        ip_address=data.get('host', '').replace('http://', '').replace('https://', '').split(':')[0],
+                        ip_address=ip_address,
                         template_method=data.get('template-id', ''),
                         connection_method=data.get('type', ''),
                         severity_level=data.get('info', {}).get('severity', 'info'),
@@ -267,8 +269,11 @@ nuclei \\
                             'matcher_name': data.get('matcher-name', ''),
                             'description': data.get('info', {}).get('description', ''),
                             'tags': data.get('info', {}).get('tags', []),
-                            'reference': data.get('info', {}).get('reference', [])
-                        }),
+                            'reference': data.get('info', {}).get('reference', []),
+                            'classification': data.get('info', {}).get('classification', {}),
+                            'curl_command': data.get('curl-command', ''),
+                            'extracted_results': data.get('extracted-results', [])
+                        }, ensure_ascii=False),
                         source_host_id=source_host_id,
                         timestamp=datetime.utcnow()
                     )
@@ -283,3 +288,30 @@ nuclei \\
             logger.error(f"Ошибка парсинга вывода Nuclei: {e}")
         
         return vulnerabilities
+    
+    def _extract_ip_from_host(self, host: str) -> str:
+        """Извлечение IP-адреса из поля host"""
+        import re
+        
+        if not host:
+            return 'unknown'
+        
+        # Удаляем протокол
+        clean_host = re.sub(r'^https?://', '', host)
+        
+        # Удаляем порт и путь
+        clean_host = clean_host.split(':')[0].split('/')[0]
+        
+        # Проверяем, является ли это IP-адресом
+        ip_pattern = r'^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$'
+        if re.match(ip_pattern, clean_host):
+            return clean_host
+        
+        # Если это доменное имя, пытаемся разрешить его в IP
+        try:
+            import socket
+            ip = socket.gethostbyname(clean_host)
+            return ip
+        except Exception:
+            # Если не удалось разрешить, возвращаем как есть
+            return clean_host
