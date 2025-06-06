@@ -104,13 +104,41 @@ systemctl start redis-server
 systemctl enable redis-server
 
 echo "Копирование файлов проекта..."
-# Копируем содержимое admin-server
+# Копируем только содержимое admin-server
 if [ -d "admin-server" ]; then
     cp -r admin-server/* "$PROJECT_DIR/"
 else
     echo "Директория admin-server не найдена. Копируем текущую директорию."
     cp -r ./* "$PROJECT_DIR/" 2>/dev/null || true
 fi
+
+# Создаем необходимые файлы если их нет
+echo "Создание обязательных файлов..."
+
+# Создаем error.html
+cat > "$PROJECT_DIR/web/templates/error.html" << 'EOF'
+{% extends "base.html" %}
+{% block title %}Ошибка - Nuclei Scanner{% endblock %}
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-body text-center">
+                    <i class="fas fa-exclamation-triangle fa-3x text-warning mb-3"></i>
+                    <h3>Произошла ошибка</h3>
+                    <p class="text-muted">{{ error_message or "Неизвестная ошибка" }}</p>
+                    <a href="{{ url_for('dashboard.index') }}" class="btn btn-primary">
+                        <i class="fas fa-home"></i> На главную
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+EOF
+
 chown -R "$USER:$USER" "$PROJECT_DIR"
 
 echo "Создание виртуального окружения Python..."
@@ -122,7 +150,7 @@ if [ -f "$PROJECT_DIR/requirements.txt" ]; then
     sudo -u "$USER" "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements.txt"
 else
     echo "Файл requirements.txt не найден. Устанавливаем базовые зависимости..."
-    sudo -u "$USER" "$VENV_DIR/bin/pip" install Flask==2.3.3 Flask-Login==0.6.3 psycopg2-binary==2.9.7 paramiko==3.3.1 requests==2.31.0 python-dotenv==1.0.0 redis==4.6.0 PyYAML==6.0.1
+    sudo -u "$USER" "$VENV_DIR/bin/pip" install Flask==2.3.3 Flask-Login==0.6.3 psycopg2-binary==2.9.7 paramiko==3.3.1 requests==2.31.0 python-dotenv==1.0.0 redis==4.6.0 PyYAML==6.0.1 bcrypt==4.0.1
 fi
 
 echo "Создание конфигурационного файла .env..."
@@ -168,7 +196,6 @@ if [ ! -f "/home/$USER/.ssh/id_rsa" ]; then
 fi
 
 echo "Создание базового CSS файла..."
-mkdir -p "$PROJECT_DIR/web/static/css"
 cat > "$PROJECT_DIR/web/static/css/style.css" << 'EOF'
 /* Основные стили для Nuclei Scanner */
 .sidebar {
@@ -199,10 +226,27 @@ cat > "$PROJECT_DIR/web/static/css/style.css" << 'EOF'
 .status-online { color: #198754; }
 .status-offline { color: #dc3545; }
 .status-unknown { color: #6c757d; }
+
+.card-stats {
+    transition: transform 0.2s;
+}
+
+.card-stats:hover {
+    transform: translateY(-2px);
+}
+
+.vulnerability-card {
+    border-left: 4px solid;
+}
+
+.vulnerability-card.critical { border-left-color: #dc3545; }
+.vulnerability-card.high { border-left-color: #fd7e14; }
+.vulnerability-card.medium { border-left-color: #ffc107; }
+.vulnerability-card.low { border-left-color: #20c997; }
+.vulnerability-card.info { border-left-color: #0dcaf0; }
 EOF
 
 echo "Создание базового JS файла..."
-mkdir -p "$PROJECT_DIR/web/static/js"
 cat > "$PROJECT_DIR/web/static/js/main.js" << 'EOF'
 // main.js - Основной JavaScript файл
 
@@ -263,29 +307,19 @@ try:
         print('База данных инициализирована успешно')
 except Exception as e:
     print(f'Ошибка инициализации БД: {e}')
+    print('Приложение продолжит работу в ограниченном режиме')
 "
 
 echo "Предоставление прав воркерам на таблицы..."
-sudo -u postgres psql -d $DB_NAME_BELARUS << EOF
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO worker_belarus_1;
-GRANT INSERT, SELECT, UPDATE ON ALL TABLES IN SCHEMA public TO worker_belarus_1;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, SELECT, UPDATE ON TABLES TO worker_belarus_1;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO worker_belarus_1;
+for DB_NAME in $DB_NAME_BELARUS $DB_NAME_RUSSIA $DB_NAME_KAZAKHSTAN; do
+    WORKER_USER="worker_${DB_NAME}_1"
+    sudo -u postgres psql -d $DB_NAME << EOF
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $WORKER_USER;
+GRANT INSERT, SELECT, UPDATE ON ALL TABLES IN SCHEMA public TO $WORKER_USER;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, SELECT, UPDATE ON TABLES TO $WORKER_USER;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO $WORKER_USER;
 EOF
-
-sudo -u postgres psql -d $DB_NAME_RUSSIA << EOF
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO worker_russia_1;
-GRANT INSERT, SELECT, UPDATE ON ALL TABLES IN SCHEMA public TO worker_russia_1;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, SELECT, UPDATE ON TABLES TO worker_russia_1;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO worker_russia_1;
-EOF
-
-sudo -u postgres psql -d $DB_NAME_KAZAKHSTAN << EOF
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO worker_kazakhstan_1;
-GRANT INSERT, SELECT, UPDATE ON ALL TABLES IN SCHEMA public TO worker_kazakhstan_1;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, SELECT, UPDATE ON TABLES TO worker_kazakhstan_1;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO worker_kazakhstan_1;
-EOF
+done
 
 echo "Настройка Supervisor для управления процессами..."
 cat > /etc/supervisor/conf.d/nuclei-scanner.conf << EOF
@@ -340,12 +374,12 @@ fi
 
 export PATH=$PATH:/usr/local/go/bin
 if ! command -v nuclei &> /dev/null; then
-    go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+    /usr/local/go/bin/go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
     ln -sf /root/go/bin/nuclei /usr/local/bin/nuclei
 fi
 
 # Обновление шаблонов Nuclei
-nuclei -update-templates
+nuclei -update-templates || echo "Не удалось обновить шаблоны Nuclei"
 
 echo "Настройка файрвола (UFW)..."
 ufw --force enable
