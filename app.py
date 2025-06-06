@@ -23,15 +23,23 @@ app.secret_key = os.environ.get('SECRET_KEY', 'nuclei-scanner-secret-key-2025')
 
 # Конфигурация базы данных
 DATABASE_URLS = {
-    'belarus': os.environ.get('DB_BELARUS', 'postgresql://user:pass@localhost:5432/nuclei_belarus'),
-    'russia': os.environ.get('DB_RUSSIA', 'postgresql://user:pass@localhost:5433/nuclei_russia'),
-    'kazakhstan': os.environ.get('DB_KAZAKHSTAN', 'postgresql://user:pass@localhost:5434/nuclei_kazakhstan')
+    'belarus': os.environ.get('DB_BELARUS', 'postgresql://nuclei_user:defaultpass@localhost:5432/nuclei_belarus'),
+    'russia': os.environ.get('DB_RUSSIA', 'postgresql://nuclei_user:defaultpass@localhost:5433/nuclei_russia'),
+    'kazakhstan': os.environ.get('DB_KAZAKHSTAN', 'postgresql://nuclei_user:defaultpass@localhost:5434/nuclei_kazakhstan')
 }
 
 # Текущая активная база (можно переключать через админку)
 current_db = os.environ.get('CURRENT_DB', 'belarus')
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URLS[current_db]
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 300,
+    'connect_args': {
+        'connect_timeout': 10,
+        'application_name': 'nuclei_scanner'
+    }
+}
 
 db = SQLAlchemy(app)
 
@@ -161,7 +169,8 @@ def execute_ssh_command(server, command):
             hostname=server.ip_address,
             port=server.ssh_port,
             username=os.environ.get('SSH_USER', 'root'),
-            key_filename=os.environ.get('SSH_KEY_PATH', '~/.ssh/id_rsa')
+            key_filename=os.path.expanduser(os.environ.get('SSH_KEY_PATH', '~/.ssh/id_rsa')),
+            timeout=30
         )
         
         stdin, stdout, stderr = ssh.exec_command(command)
@@ -177,7 +186,7 @@ def update_server_status():
     """Фоновая задача обновления статуса серверов"""
     while True:
         try:
-            with app.app_context():  # Add app context for thread
+            with app.app_context():
                 servers = Server.query.all()
                 for server in servers:
                     result = execute_ssh_command(server, 'echo "ping"')
@@ -207,13 +216,11 @@ def login():
         username = request.form['username']
         password = request.form['password']
         
-        # Проверка логина/пароля с использованием хеширования
+        # Проверка логина/пароля
         admin_user = os.environ.get('ADMIN_USER', 'admin')
         admin_pass = os.environ.get('ADMIN_PASS', 'admin123')
         
-        if username == admin_user and check_password_hash(
-            generate_password_hash(admin_pass), password
-        ):
+        if username == admin_user and password == admin_pass:
             session['logged_in'] = True
             session['username'] = username
             return redirect(url_for('dashboard'))
@@ -232,35 +239,43 @@ def logout():
 @app.route('/')
 def dashboard():
     """Главная панель управления"""
-    # Статистика уязвимостей
-    vuln_stats = db.session.execute(text("""
-        SELECT severity_level, COUNT(*) as count 
-        FROM vulnerabilities 
-        GROUP BY severity_level
-    """)).fetchall()
-    
-    # Статус серверов
-    server_stats = db.session.execute(text("""
-        SELECT status, COUNT(*) as count 
-        FROM servers 
-        GROUP BY status
-    """)).fetchall()
-    
-    # Активные задачи
-    active_tasks = ScanTask.query.filter(
-        ScanTask.status.in_(['pending', 'running'])
-    ).count()
-    
-    # Последние уязвимости
-    recent_vulns = Vulnerability.query.order_by(
-        Vulnerability.discovered_at.desc()
-    ).limit(10).all()
-    
-    return render_template('dashboard.html', 
-                         vuln_stats=vuln_stats,
-                         server_stats=server_stats,
-                         active_tasks=active_tasks,
-                         recent_vulns=recent_vulns)
+    try:
+        # Статистика уязвимостей
+        vuln_stats = db.session.execute(text("""
+            SELECT severity_level, COUNT(*) as count 
+            FROM vulnerabilities 
+            GROUP BY severity_level
+        """)).fetchall()
+        
+        # Статус серверов
+        server_stats = db.session.execute(text("""
+            SELECT status, COUNT(*) as count 
+            FROM servers 
+            GROUP BY status
+        """)).fetchall()
+        
+        # Активные задачи
+        active_tasks = ScanTask.query.filter(
+            ScanTask.status.in_(['pending', 'running'])
+        ).count()
+        
+        # Последние уязвимости
+        recent_vulns = Vulnerability.query.order_by(
+            Vulnerability.discovered_at.desc()
+        ).limit(10).all()
+        
+        return render_template('dashboard.html', 
+                             vuln_stats=vuln_stats,
+                             server_stats=server_stats,
+                             active_tasks=active_tasks,
+                             recent_vulns=recent_vulns)
+    except Exception as e:
+        flash(f'Ошибка загрузки данных: {str(e)}')
+        return render_template('dashboard.html', 
+                             vuln_stats=[],
+                             server_stats=[],
+                             active_tasks=0,
+                             recent_vulns=[])
 
 @app.route('/servers')
 def servers():
@@ -425,16 +440,19 @@ def vulnerabilities():
 @app.route('/api/worker/heartbeat', methods=['POST'])
 def worker_heartbeat():
     """API для отправки heartbeat от воркеров"""
-    data = request.get_json()
-    server_id = data.get('server_id')
-    
-    server = Server.query.get(server_id)
-    if server:
-        server.status = 'online'
-        server.last_seen = datetime.datetime.utcnow()
-        db.session.commit()
-    
-    return jsonify({'status': 'ok'})
+    try:
+        data = request.get_json()
+        server_id = data.get('server_id')
+        
+        server = Server.query.get(server_id)
+        if server:
+            server.status = 'online'
+            server.last_seen = datetime.datetime.utcnow()
+            db.session.commit()
+        
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/worker/submit_vulnerability', methods=['POST'])
 def submit_vulnerability():
@@ -476,29 +494,35 @@ def submit_vulnerability():
 @app.route('/api/worker/task_complete', methods=['POST'])
 def task_complete():    
     """API для уведомления о завершении задачи"""
-    data = request.get_json()
-    task_id = data.get('task_id')
-    
-    task = ScanTask.query.get(task_id)
-    if task:
-        task.status = 'completed'
-        task.completed_at = datetime.datetime.utcnow()
-        db.session.commit()
+    try:
+        data = request.get_json()
+        task_id = data.get('task_id')
         
-        send_telegram_message(f"✅ Задача завершена: {task.name}")
-    
-    return jsonify({'status': 'ok'})
+        task = ScanTask.query.get(task_id)
+        if task:
+            task.status = 'completed'
+            task.completed_at = datetime.datetime.utcnow()
+            db.session.commit()
+            
+            send_telegram_message(f"✅ Задача завершена: {task.name}")
+        
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# Remove the @app.before_first_request decorator and create a new function
 def create_tables():
     """Создание таблиц в базе данных"""
-    with app.app_context():
-        db.create_all()
+    try:
+        with app.app_context():
+            db.create_all()
+            print("[SUCCESS] Таблицы базы данных созданы")
+    except Exception as e:
+        print(f"[ERROR] Ошибка создания таблиц: {e}")
+        raise
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
     print("\n[INFO] Shutting down Nuclei Scanner...")
-    # Cleanup code here
     sys.exit(0)
 
 if __name__ == '__main__':
@@ -507,12 +531,14 @@ if __name__ == '__main__':
     signal.signal(signal.SIGTERM, signal_handler)
     
     try:
+        print("[INFO] Инициализация базы данных...")
         create_tables()
         
         # Запуск фонового потока обновления статуса серверов
         status_thread = threading.Thread(target=update_server_status, daemon=True)
         status_thread.start()
         
+        print("[INFO] Запуск Flask приложения...")
         # Запуск Flask приложения
         app.run(
             host='0.0.0.0',

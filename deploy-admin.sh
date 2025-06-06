@@ -79,7 +79,8 @@ install_packages_debian() {
         build-essential \
         libpq-dev \
         redis-server \
-        golang-go
+        golang-go \
+        openssl
 }
 
 # Функция установки пакетов для RedHat/CentOS
@@ -108,7 +109,8 @@ install_packages_redhat() {
         make \
         postgresql-devel \
         redis \
-        golang
+        golang \
+        openssl
 }
 
 # Создание пользователя приложения
@@ -142,11 +144,28 @@ setup_postgresql() {
     # Генерация случайного пароля
     DB_PASSWORD=$(openssl rand -base64 32)
     
+    # Обновляем настройки аутентификации PostgreSQL
+    PG_VERSION=$(sudo -u postgres psql -t -c "SELECT version();" | grep -oP '\d+\.\d+' | head -1)
+    PG_CONFIG_DIR="/etc/postgresql/${PG_VERSION}/main"
+    
+    # Для Ubuntu/Debian
+    if [ "$OS" = "debian" ]; then
+        if [ -d "$PG_CONFIG_DIR" ]; then
+            # Настройка pg_hba.conf для локальных подключений
+            sed -i "s/#listen_addresses = 'localhost'/listen_addresses = 'localhost'/" "${PG_CONFIG_DIR}/postgresql.conf"
+            
+            # Перезапуск PostgreSQL
+            systemctl restart postgresql
+        fi
+    fi
+    
+    # Создание пользователя и баз данных
     sudo -u postgres psql << EOF
-CREATE DATABASE ${DB_NAME}_belarus;
-CREATE DATABASE ${DB_NAME}_russia;
-CREATE DATABASE ${DB_NAME}_kazakhstan;
 CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';
+ALTER USER $DB_USER CREATEDB;
+CREATE DATABASE ${DB_NAME}_belarus OWNER $DB_USER;
+CREATE DATABASE ${DB_NAME}_russia OWNER $DB_USER;
+CREATE DATABASE ${DB_NAME}_kazakhstan OWNER $DB_USER;
 GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME}_belarus TO $DB_USER;
 GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME}_russia TO $DB_USER;
 GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME}_kazakhstan TO $DB_USER;
@@ -154,11 +173,17 @@ GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME}_kazakhstan TO $DB_USER;
 EOF
 
     # Сохранение данных доступа
-    echo "DB_BELARUS=postgresql://$DB_USER:$DB_PASSWORD@localhost:5432/${DB_NAME}_belarus" > /etc/nuclei-admin.env
-    echo "DB_RUSSIA=postgresql://$DB_USER:$DB_PASSWORD@localhost:5433/${DB_NAME}_russia" >> /etc/nuclei-admin.env
-    echo "DB_KAZAKHSTAN=postgresql://$DB_USER:$DB_PASSWORD@localhost:5434/${DB_NAME}_kazakhstan" >> /etc/nuclei-admin.env
+    cat > /etc/nuclei-admin.env << EOF
+DB_BELARUS=postgresql://$DB_USER:$DB_PASSWORD@localhost:5432/${DB_NAME}_belarus
+DB_RUSSIA=postgresql://$DB_USER:$DB_PASSWORD@localhost:5432/${DB_NAME}_russia
+DB_KAZAKHSTAN=postgresql://$DB_USER:$DB_PASSWORD@localhost:5432/${DB_NAME}_kazakhstan
+CURRENT_DB=belarus
+DB_PASSWORD=$DB_PASSWORD
+EOF
     
-    print_success "PostgreSQL настроен"
+    chmod 600 /etc/nuclei-admin.env
+    
+    print_success "PostgreSQL настроен. Пароль сохранён в /etc/nuclei-admin.env"
 }
 
 # Создание директории приложения
@@ -185,20 +210,27 @@ install_nuclei() {
     # Установка Go если не установлен
     if ! command -v go &> /dev/null; then
         print_status "Установка Go..."
-        wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
-        tar -C /usr/local -xzf go1.21.0.linux-amd64.tar.gz
-        rm go1.21.0.linux-amd64.tar.gz
+        wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz -O /tmp/go.tar.gz
+        tar -C /usr/local -xzf /tmp/go.tar.gz
+        rm /tmp/go.tar.gz
         echo 'export PATH=$PATH:/usr/local/go/bin' > /etc/profile.d/go.sh
         source /etc/profile.d/go.sh
+        export PATH=$PATH:/usr/local/go/bin
     fi
     
-    # Установка Nuclei
-    go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest
+    # Установка Nuclei через go install
+    GOPATH=/opt/go /usr/local/go/bin/go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
     
     # Создание символической ссылки
-    ln -sf /root/go/bin/nuclei /usr/local/bin/nuclei
+    ln -sf /opt/go/bin/nuclei /usr/local/bin/nuclei
     
-    print_success "Nuclei установлен"
+    # Проверка установки
+    if nuclei -version &>/dev/null; then
+        print_success "Nuclei установлен успешно"
+    else
+        print_error "Ошибка установки Nuclei"
+        exit 1
+    fi
 }
 
 # Установка Python-зависимостей
@@ -210,9 +242,9 @@ install_python_deps() {
     
     # Создание requirements.txt
     cat > "$APP_DIR/requirements.txt" << 'EOF'
-Flask>=2.3.3
-Flask-SQLAlchemy>=3.0.5
-Werkzeug>=2.3.7
+Flask==2.3.3
+Flask-SQLAlchemy==3.0.5
+Werkzeug==2.3.7
 psycopg2-binary==2.9.7
 SQLAlchemy==2.0.20
 paramiko==3.3.1
@@ -265,17 +297,13 @@ deploy_app_files() {
         exit 1
     fi
     
-    # Создаем базовые статические файлы если их нет
-    if [ ! -d "$APP_DIR/static" ]; then
-        mkdir -p "$APP_DIR/static/css" "$APP_DIR/static/js"
-    fi
-    
-    # Копируем статические файлы из исходной директории
+    # Копируем статические файлы
     if [ -d "static" ]; then
         cp -r static/* "$APP_DIR/static/"
+        chown -R "$APP_USER:$APP_USER" "$APP_DIR/static/"
     else
-        print_error "Директория static не найдена"
-        exit 1
+        print_warning "Директория static не найдена, создаём базовые файлы"
+        mkdir -p "$APP_DIR/static/css" "$APP_DIR/static/js" "$APP_DIR/static/img"
     fi
     
     chown -R "$APP_USER:$APP_USER" "$APP_DIR/static"
@@ -287,6 +315,9 @@ deploy_app_files() {
 setup_config() {
     print_status "Создание конфигурационного файла..."
     
+    # Загружаем пароль базы данных
+    source /etc/nuclei-admin.env
+    
     # Генерация секретного ключа
     SECRET_KEY=$(openssl rand -base64 64)
     
@@ -297,8 +328,8 @@ SECRET_KEY='$SECRET_KEY'
 
 # Базы данных
 DB_BELARUS=postgresql://$DB_USER:$DB_PASSWORD@localhost:5432/${DB_NAME}_belarus
-DB_RUSSIA=postgresql://$DB_USER:$DB_PASSWORD@localhost:5433/${DB_NAME}_russia
-DB_KAZAKHSTAN=postgresql://$DB_USER:$DB_PASSWORD@localhost:5434/${DB_NAME}_kazakhstan
+DB_RUSSIA=postgresql://$DB_USER:$DB_PASSWORD@localhost:5432/${DB_NAME}_russia
+DB_KAZAKHSTAN=postgresql://$DB_USER:$DB_PASSWORD@localhost:5432/${DB_NAME}_kazakhstan
 CURRENT_DB=belarus
 
 # Аутентификация
@@ -429,18 +460,6 @@ stdout_logfile=$APP_DIR/logs/gunicorn.log
 stdout_logfile_maxbytes=50MB
 stdout_logfile_backups=5
 environment=PATH="$APP_DIR/venv/bin",PYTHONUNBUFFERED=1
-
-[program:nuclei-admin-celery]
-command=$APP_DIR/venv/bin/celery -A app.celery worker --loglevel=info --concurrency=4 --max-tasks-per-child=1000
-directory=$APP_DIR
-user=$APP_USER
-autostart=true
-autorestart=true
-redirect_stderr=true
-stdout_logfile=$APP_DIR/logs/celery.log
-stdout_logfile_maxbytes=50MB
-stdout_logfile_backups=5
-environment=PATH="$APP_DIR/venv/bin",PYTHONUNBUFFERED=1
 EOF
 
     # Перезапуск Supervisor
@@ -468,7 +487,7 @@ $APP_DIR/logs/*.log {
     notifempty
     create 644 $APP_USER $APP_USER
     postrotate
-        supervisorctl restart nuclei-admin nuclei-admin-celery
+        supervisorctl restart nuclei-admin
     endscript
 }
 EOF
@@ -485,7 +504,6 @@ setup_firewall() {
         ufw allow ssh
         ufw allow 80/tcp
         ufw allow 443/tcp
-        ufw allow 5000/tcp
         ufw --force enable
         print_success "UFW firewall настроен"
     elif command -v firewall-cmd >/dev/null 2>&1; then
@@ -504,16 +522,30 @@ setup_firewall() {
 init_database() {
     print_status "Инициализация базы данных..."
     
-    # Запуск приложения для создания таблиц
+    # Загружаем переменные окружения
     cd "$APP_DIR"
-    sudo -u "$APP_USER" "$APP_DIR/venv/bin/python" -c "
+    
+    # Создаём таблицы в базе данных
+    sudo -u "$APP_USER" bash -c "cd $APP_DIR && source .env && $APP_DIR/venv/bin/python -c \"
+import os
+import sys
+sys.path.insert(0, os.getcwd())
 from app import app, db
 with app.app_context():
-    db.create_all()
-print('База данных инициализирована')
-"
+    try:
+        db.create_all()
+        print('✅ База данных инициализирована успешно')
+    except Exception as e:
+        print(f'❌ Ошибка инициализации базы данных: {e}')
+        sys.exit(1)
+\""
     
-    print_success "База данных инициализирована"
+    if [ $? -eq 0 ]; then
+        print_success "База данных инициализирована"
+    else
+        print_error "Ошибка инициализации базы данных"
+        exit 1
+    fi
 }
 
 # Проверка состояния сервисов
@@ -523,7 +555,11 @@ check_services() {
     echo "PostgreSQL: $(systemctl is-active postgresql)"
     echo "Nginx: $(systemctl is-active nginx)"
     echo "Supervisor: $(systemctl is-active supervisor)"
-    echo "Redis: $(systemctl is-active redis-server || systemctl is-active redis)"
+    echo "Redis: $(systemctl is-active redis-server || systemctl is-active redis || echo 'inactive')"
+    
+    # Проверяем запуск приложения
+    sleep 5
+    echo "Nuclei Admin: $(supervisorctl status nuclei-admin | awk '{print $2}' || echo 'not running')"
     
     print_success "Проверка завершена"
 }
@@ -549,7 +585,7 @@ print_final_info() {
     echo "   • Публичный ключ: /home/$APP_USER/.ssh/id_rsa.pub"
     echo ""
     echo "🛠️ Управление сервисом:"
-    echo "   • Статус: supervisorctl status"
+    echo "   • Статус: supervisorctl status nuclei-admin"
     echo "   • Перезапуск: supervisorctl restart nuclei-admin"
     echo "   • Логи: tail -f $APP_DIR/logs/gunicorn.log"
     echo ""
@@ -558,6 +594,8 @@ print_final_info() {
     echo "   2. Настройте SSL сертификат (опционально)"
     echo "   3. Настройте Telegram уведомления в .env файле"
     echo "   4. Добавьте воркер-серверы через веб-интерфейс"
+    echo ""
+    echo "📊 Информация о базе данных сохранена в /etc/nuclei-admin.env"
     echo ""
     print_warning "Не забудьте изменить пароль администратора!"
 }
