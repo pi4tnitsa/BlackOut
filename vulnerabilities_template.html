@@ -1,0 +1,352 @@
+{% extends "base.html" %}
+
+{% block title %}Уязвимости - Nuclei Scanner{% endblock %}
+{% block page_title %}Найденные уязвимости{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-8">
+        <h4>Обнаруженные уязвимости</h4>
+        <p class="text-muted">Результаты сканирования безопасности</p>
+    </div>
+    <div class="col-md-4">
+        <div class="input-group">
+            <select class="form-select" onchange="filterBySeverity(this.value)">
+                <option value="">Все уровни критичности</option>
+                <option value="critical" {% if request.args.get('severity') == 'critical' %}selected{% endif %}>Критичные</option>
+                <option value="high" {% if request.args.get('severity') == 'high' %}selected{% endif %}>Высокие</option>
+                <option value="medium" {% if request.args.get('severity') == 'medium' %}selected{% endif %}>Средние</option>
+                <option value="low" {% if request.args.get('severity') == 'low' %}selected{% endif %}>Низкие</option>
+            </select>
+            <button class="btn btn-outline-secondary" onclick="exportResults()">
+                <i class="fas fa-download"></i> Экспорт
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if vulnerabilities.items %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>IP адрес</th>
+                        <th>Шаблон</th>
+                        <th>Критичность</th>
+                        <th>URL</th>
+                        <th>Обнаружено</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for vuln in vulnerabilities.items %}
+                    <tr class="{% if vuln.severity_level == 'critical' %}table-danger
+                              {% elif vuln.severity_level == 'high' %}table-warning
+                              {% elif vuln.severity_level == 'medium' %}table-info{% endif %}">
+                        <td>
+                            <code class="bg-light px-2 py-1 rounded">{{ vuln.ip_address }}</code>
+                        </td>
+                        <td>
+                            <div>
+                                <strong>{{ vuln.template_id }}</strong>
+                                {% if vuln.matcher_name %}
+                                    <br><small class="text-muted">{{ vuln.matcher_name }}</small>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td>
+                            <span class="badge 
+                                {% if vuln.severity_level == 'critical' %}bg-danger
+                                {% elif vuln.severity_level == 'high' %}bg-warning text-dark
+                                {% elif vuln.severity_level == 'medium' %}bg-info
+                                {% elif vuln.severity_level == 'low' %}bg-success
+                                {% else %}bg-secondary{% endif %}">
+                                {{ vuln.severity_level|title }}
+                            </span>
+                        </td>
+                        <td>
+                            {% if vuln.url %}
+                                <a href="{{ vuln.url }}" target="_blank" class="text-decoration-none">
+                                    {{ vuln.url|truncate(40) }}
+                                    <i class="fas fa-external-link-alt fa-xs"></i>
+                                </a>
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div>
+                                <small class="text-muted">{{ moment(vuln.discovered_at).format('DD.MM.YYYY HH:mm') }}</small>
+                                <br>
+                                <small class="text-muted">{{ moment(vuln.discovered_at).fromNow() }}</small>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-info" 
+                                        onclick="viewVulnDetails({{ vuln.id }})" title="Детали">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                <button class="btn btn-outline-secondary" 
+                                        onclick="copyToClipboard('{{ vuln.url or vuln.ip_address }}')" title="Копировать">
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                                {% if vuln.severity_level in ['critical', 'high'] %}
+                                <button class="btn btn-outline-warning" 
+                                        onclick="markForReview({{ vuln.id }})" title="В работу">
+                                    <i class="fas fa-flag"></i>
+                                </button>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Пагинация -->
+        {% if vulnerabilities.pages > 1 %}
+        <nav aria-label="Навигация по страницам">
+            <ul class="pagination justify-content-center">
+                {% if vulnerabilities.has_prev %}
+                <li class="page-item">
+                    <a class="page-link" href="{{ url_for('vulnerabilities', page=vulnerabilities.prev_num, severity=request.args.get('severity', '')) }}">
+                        <i class="fas fa-chevron-left"></i> Предыдущая
+                    </a>
+                </li>
+                {% endif %}
+                
+                {% for page_num in vulnerabilities.iter_pages() %}
+                    {% if page_num %}
+                        {% if page_num != vulnerabilities.page %}
+                        <li class="page-item">
+                            <a class="page-link" href="{{ url_for('vulnerabilities', page=page_num, severity=request.args.get('severity', '')) }}">
+                                {{ page_num }}
+                            </a>
+                        </li>
+                        {% else %}
+                        <li class="page-item active">
+                            <span class="page-link">{{ page_num }}</span>
+                        </li>
+                        {% endif %}
+                    {% else %}
+                    <li class="page-item disabled">
+                        <span class="page-link">...</span>
+                    </li>
+                    {% endif %}
+                {% endfor %}
+                
+                {% if vulnerabilities.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="{{ url_for('vulnerabilities', page=vulnerabilities.next_num, severity=request.args.get('severity', '')) }}">
+                        Следующая <i class="fas fa-chevron-right"></i>
+                    </a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+        
+        <div class="text-center text-muted">
+            Показаны {{ vulnerabilities.items|length }} из {{ vulnerabilities.total }} уязвимостей
+        </div>
+        {% endif %}
+        
+        {% else %}
+        <div class="text-center text-muted py-5">
+            <i class="fas fa-shield-alt fa-3x mb-3 text-success"></i>
+            <h6>Уязвимости не обнаружены</h6>
+            <p>Это отличная новость! Ваша инфраструктура защищена.</p>
+            <a href="{{ url_for('tasks') }}" class="btn btn-primary">
+                <i class="fas fa-plus"></i> Запустить сканирование
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Модальное окно деталей уязвимости -->
+<div class="modal fade" id="vulnDetailsModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-bug"></i> Детали уязвимости
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="vulnDetailsContent">
+                Загрузка деталей...
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                <button type="button" class="btn btn-primary" onclick="exportVulnDetails()">
+                    <i class="fas fa-download"></i> Экспорт отчёта
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterBySeverity(severity) {
+    const params = new URLSearchParams(window.location.search);
+    if (severity) {
+        params.set('severity', severity);
+    } else {
+        params.delete('severity');
+    }
+    params.delete('page'); // Сбрасываем пагинацию при фильтрации
+    window.location.search = params.toString();
+}
+
+function viewVulnDetails(vulnId) {
+    const modal = new bootstrap.Modal(document.getElementById('vulnDetailsModal'));
+    modal.show();
+    
+    // В реальной системе здесь был бы AJAX запрос для получения деталей
+    document.getElementById('vulnDetailsContent').innerHTML = `
+        <div class="row">
+            <div class="col-md-6">
+                <h6>Основная информация</h6>
+                <table class="table table-sm">
+                    <tr><td>ID уязвимости:</td><td>${vulnId}</td></tr>
+                    <tr><td>IP адрес:</td><td><code>192.168.1.15</code></td></tr>
+                    <tr><td>Шаблон:</td><td>CVE-2023-1234</td></tr>
+                    <tr><td>Критичность:</td><td><span class="badge bg-danger">Critical</span></td></tr>
+                    <tr><td>URL:</td><td><a href="https://192.168.1.15:8080/admin" target="_blank">https://192.168.1.15:8080/admin</a></td></tr>
+                    <tr><td>Обнаружено:</td><td>${new Date().toLocaleString('ru-RU')}</td></tr>
+                </table>
+            </div>
+            <div class="col-md-6">
+                <h6>Техническая информация</h6>
+                <table class="table table-sm">
+                    <tr><td>Matcher:</td><td>status_code</td></tr>
+                    <tr><td>Сервер источник:</td><td>nuclei-worker-01</td></tr>
+                    <tr><td>Задача:</td><td><a href="#" onclick="viewTaskDetails(123)">Задача #123</a></td></tr>
+                    <tr><td>Теги:</td><td><span class="badge bg-secondary me-1">rce</span><span class="badge bg-secondary">critical</span></td></tr>
+                </table>
+            </div>
+        </div>
+        
+        <div class="mt-4">
+            <ul class="nav nav-tabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#request-tab">
+                        HTTP Request
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#response-tab">
+                        HTTP Response
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#metadata-tab">
+                        Metadata
+                    </button>
+                </li>
+            </ul>
+            
+            <div class="tab-content mt-3">
+                <div class="tab-pane fade show active" id="request-tab">
+                    <pre class="bg-dark text-light p-3 rounded" style="max-height: 300px; overflow-y: auto;">GET /admin HTTP/1.1
+Host: 192.168.1.15:8080
+User-Agent: Nuclei - Open-source Project (github.com/projectdiscovery/nuclei)
+Accept: */*
+Accept-Language: en
+Accept-Encoding: gzip</pre>
+                </div>
+                <div class="tab-pane fade" id="response-tab">
+                    <pre class="bg-dark text-light p-3 rounded" style="max-height: 300px; overflow-y: auto;">HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Content-Length: 1234
+Server: Apache/2.4.41
+X-Powered-By: PHP/7.4.3
+
+&lt;html&gt;
+&lt;head&gt;&lt;title&gt;Admin Panel&lt;/title&gt;&lt;/head&gt;
+&lt;body&gt;
+&lt;h1&gt;Admin Dashboard&lt;/h1&gt;
+&lt;p&gt;Welcome to admin panel&lt;/p&gt;
+&lt;/body&gt;
+&lt;/html&gt;</pre>
+                </div>
+                <div class="tab-pane fade" id="metadata-tab">
+                    <pre class="bg-light p-3 rounded" style="max-height: 300px; overflow-y: auto;">{
+  "template_info": {
+    "name": "Admin Panel Detection",
+    "author": "security-team",
+    "severity": "critical",
+    "description": "Detects exposed admin panels",
+    "reference": ["https://example.com/cve-2023-1234"]
+  },
+  "curl_command": "curl -X GET 'https://192.168.1.15:8080/admin'",
+  "timestamp": "${new Date().toISOString()}"
+}</pre>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        // Показываем уведомление об успешном копировании
+        const toast = document.createElement('div');
+        toast.className = 'toast-notification';
+        toast.textContent = 'Скопировано в буфер обмена';
+        toast.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #28a745;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            z-index: 9999;
+            animation: slideIn 0.3s ease;
+        `;
+        document.body.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.remove();
+        }, 2000);
+    });
+}
+
+function markForReview(vulnId) {
+    if (confirm('Отметить уязвимость как "в работе"?')) {
+        // В реальной системе здесь был бы AJAX запрос
+        alert(`Уязвимость ${vulnId} отмечена для проверки`);
+    }
+}
+
+function exportResults() {
+    // В реальной системе здесь была бы генерация и скачивание отчёта
+    alert('Экспорт результатов в разработке');
+}
+
+function exportVulnDetails() {
+    // В реальной системе здесь была бы генерация детального отчёта
+    alert('Экспорт детального отчёта в разработке');
+}
+
+// Настройка moment.js
+moment.locale('ru');
+
+// CSS для анимации уведомлений
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+`;
+document.head.appendChild(style);
+</script>
+{% endblock %}

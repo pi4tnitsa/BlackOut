@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+
+{% block title %}Управление серверами - Nuclei Scanner{% endblock %}
+{% block page_title %}Управление серверами{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-8">
+        <h4>Список серверов</h4>
+        <p class="text-muted">Управление воркер-узлами для сканирования</p>
+    </div>
+    <div class="col-md-4 text-end">
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addServerModal">
+            <i class="fas fa-plus"></i> Добавить сервер
+        </button>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if servers %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Имя хоста</th>
+                        <th>IP адрес</th>
+                        <th>SSH порт</th>
+                        <th>Статус</th>
+                        <th>Последняя активность</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for server in servers %}
+                    <tr>
+                        <td>{{ server.id }}</td>
+                        <td>
+                            <strong>{{ server.hostname }}</strong>
+                        </td>
+                        <td>
+                            <code>{{ server.ip_address }}</code>
+                        </td>
+                        <td>{{ server.ssh_port }}</td>
+                        <td>
+                            {% if server.status == 'online' %}
+                                <span class="badge bg-success">
+                                    <i class="fas fa-circle"></i> Онлайн
+                                </span>
+                            {% else %}
+                                <span class="badge bg-danger">
+                                    <i class="fas fa-circle"></i> Оффлайн
+                                </span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if server.last_seen %}
+                                <small class="text-muted">{{ moment(server.last_seen).fromNow() }}</small>
+                            {% else %}
+                                <small class="text-muted">Никогда</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-info" 
+                                        onclick="testConnection({{ server.id }}, '{{ server.ip_address }}')">
+                                    <i class="fas fa-plug"></i>
+                                </button>
+                                <button class="btn btn-outline-warning" 
+                                        onclick="executeCommand({{ server.id }}, '{{ server.hostname }}')">
+                                    <i class="fas fa-terminal"></i>
+                                </button>
+                                <form method="POST" action="{{ url_for('delete_server', server_id=server.id) }}" 
+                                      style="display: inline;" 
+                                      onsubmit="return confirm('Удалить сервер {{ server.hostname }}?')">
+                                    <button type="submit" class="btn btn-outline-danger">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center text-muted py-5">
+            <i class="fas fa-server fa-3x mb-3"></i>
+            <h6>Серверы не добавлены</h6>
+            <p>Добавьте первый сервер для начала сканирования</p>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addServerModal">
+                <i class="fas fa-plus"></i> Добавить сервер
+            </button>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Модальное окно добавления сервера -->
+<div class="modal fade" id="addServerModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-plus"></i> Добавить новый сервер
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('add_server') }}">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="hostname" class="form-label">Имя хоста</label>
+                        <input type="text" class="form-control" id="hostname" name="hostname" 
+                               placeholder="nuclei-worker-01" required>
+                        <div class="form-text">Уникальное имя для идентификации сервера</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="ip_address" class="form-label">IP адрес</label>
+                        <input type="text" class="form-control" id="ip_address" name="ip_address" 
+                               placeholder="192.168.1.100" required 
+                               pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$">
+                        <div class="form-text">IPv4 адрес сервера</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="ssh_port" class="form-label">SSH порт</label>
+                        <input type="number" class="form-control" id="ssh_port" name="ssh_port" 
+                               value="22" min="1" max="65535">
+                        <div class="form-text">Порт для SSH подключения (по умолчанию 22)</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-plus"></i> Добавить
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно выполнения команд -->
+<div class="modal fade" id="commandModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-terminal"></i> Выполнение команды на сервере
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="command" class="form-label">Команда</label>
+                    <input type="text" class="form-control font-monospace" id="command" 
+                           placeholder="ls -la" value="nuclei -version">
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Результат выполнения</label>
+                    <pre id="commandOutput" class="bg-dark text-light p-3 rounded" style="height: 200px; overflow-y: auto;">
+Нажмите "Выполнить" для запуска команды...
+                    </pre>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                <button type="button" class="btn btn-primary" onclick="runCommand()">
+                    <i class="fas fa-play"></i> Выполнить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentServerId = null;
+
+function testConnection(serverId, ip) {
+    // Простая проверка подключения
+    const btn = event.target.closest('button');
+    const originalHtml = btn.innerHTML;
+    
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    btn.disabled = true;
+    
+    // Имитация проверки соединения
+    setTimeout(() => {
+        btn.innerHTML = originalHtml;
+        btn.disabled = false;
+        
+        // В реальной системе здесь был бы AJAX запрос
+        alert(`Проверка соединения с ${ip} завершена`);
+    }, 2000);
+}
+
+function executeCommand(serverId, hostname) {
+    currentServerId = serverId;
+    document.querySelector('#commandModal .modal-title').innerHTML = 
+        `<i class="fas fa-terminal"></i> Выполнение команды на сервере ${hostname}`;
+    
+    const modal = new bootstrap.Modal(document.getElementById('commandModal'));
+    modal.show();
+}
+
+function runCommand() {
+    const command = document.getElementById('command').value;
+    const output = document.getElementById('commandOutput');
+    
+    if (!command.trim()) {
+        output.textContent = 'Ошибка: команда не указана';
+        return;
+    }
+    
+    output.textContent = 'Выполнение команды...\n';
+    
+    // В реальной системе здесь был бы AJAX запрос к серверу
+    // Пока имитируем выполнение
+    setTimeout(() => {
+        output.textContent = `$ ${command}\n`;
+        
+        // Имитация результата в зависимости от команды
+        if (command.includes('nuclei')) {
+            output.textContent += `Nuclei Engine v2.9.15
+            
+Current nuclei version: v2.9.15 (latest)
+Current nuclei-templates version: v9.6.4 (latest)`;
+        } else if (command.includes('ls')) {
+            output.textContent += `total 48
+drwxr-xr-x  6 root root  4096 Jun  6 10:30 .
+drwxr-xr-x 18 root root  4096 Jun  6 09:15 ..
+-rw-r--r--  1 root root  1234 Jun  6 10:29 worker.py
+drwxr-xr-x  2 root root  4096 Jun  6 10:30 nuclei-templates`;
+        } else {
+            output.textContent += `Команда выполнена успешно\nВремя выполнения: 0.${Math.floor(Math.random() * 999)}s`;
+        }
+    }, 1500);
+}
+
+// Автообновление статуса серверов каждые 30 секунд
+setInterval(() => {
+    location.reload();
+}, 30000);
+
+// Настройка moment.js
+moment.locale('ru');
+</script>
+{% endblock %}

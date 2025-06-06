@@ -1,0 +1,302 @@
+{% extends "base.html" %}
+
+{% block title %}Панель управления - Nuclei Scanner{% endblock %}
+{% block page_title %}Панель управления{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <!-- Метрики уязвимостей -->
+    <div class="col-md-3 mb-3">
+        <div class="card card-metric h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h6 class="card-title text-muted">Критичные уязвимости</h6>
+                        <h3 class="text-danger">
+                            {% set critical = vuln_stats|selectattr('severity_level', 'equalto', 'critical')|map(attribute='count')|sum %}
+                            {{ critical or 0 }}
+                        </h3>
+                    </div>
+                    <div class="text-danger">
+                        <i class="fas fa-exclamation-triangle fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card card-metric h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h6 class="card-title text-muted">Высокие уязвимости</h6>
+                        <h3 class="text-warning">
+                            {% set high = vuln_stats|selectattr('severity_level', 'equalto', 'high')|map(attribute='count')|sum %}
+                            {{ high or 0 }}
+                        </h3>
+                    </div>
+                    <div class="text-warning">
+                        <i class="fas fa-exclamation fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card card-metric h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h6 class="card-title text-muted">Активные задачи</h6>
+                        <h3 class="text-info">{{ active_tasks }}</h3>
+                    </div>
+                    <div class="text-info">
+                        <i class="fas fa-tasks fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card card-metric h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h6 class="card-title text-muted">Онлайн серверы</h6>
+                        <h3 class="text-success">
+                            {% set online = server_stats|selectattr('status', 'equalto', 'online')|map(attribute='count')|sum %}
+                            {{ online or 0 }}
+                        </h3>
+                    </div>
+                    <div class="text-success">
+                        <i class="fas fa-server fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- График статистики уязвимостей -->
+    <div class="col-md-6 mb-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-chart-pie"></i> Статистика уязвимостей по критичности
+                </h5>
+            </div>
+            <div class="card-body">
+                <canvas id="vulnChart" width="400" height="300"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Статус серверов -->
+    <div class="col-md-6 mb-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-server"></i> Статус серверов
+                </h5>
+            </div>
+            <div class="card-body">
+                <canvas id="serverChart" width="400" height="300"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Последние уязвимости -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-bug"></i> Последние найденные уязвимости
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if recent_vulns %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>IP адрес</th>
+                                <th>Шаблон</th>
+                                <th>Критичность</th>
+                                <th>URL</th>
+                                <th>Обнаружено</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for vuln in recent_vulns %}
+                            <tr>
+                                <td>
+                                    <code>{{ vuln.ip_address }}</code>
+                                </td>
+                                <td>
+                                    <span class="badge bg-secondary">{{ vuln.template_id }}</span>
+                                </td>
+                                <td>
+                                    <span class="badge 
+                                        {% if vuln.severity_level == 'critical' %}bg-danger
+                                        {% elif vuln.severity_level == 'high' %}bg-warning
+                                        {% elif vuln.severity_level == 'medium' %}bg-info
+                                        {% else %}bg-success{% endif %}">
+                                        {{ vuln.severity_level|title }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if vuln.url %}
+                                        <a href="{{ vuln.url }}" target="_blank" class="text-decoration-none">
+                                            {{ vuln.url|truncate(50) }}
+                                            <i class="fas fa-external-link-alt fa-xs"></i>
+                                        </a>
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <small class="text-muted">
+                                        {{ moment(vuln.discovered_at).fromNow() }}
+                                    </small>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="text-center mt-3">
+                    <a href="{{ url_for('vulnerabilities') }}" class="btn btn-outline-primary">
+                        <i class="fas fa-list"></i> Просмотреть все уязвимости
+                    </a>
+                </div>
+                {% else %}
+                <div class="text-center text-muted py-4">
+                    <i class="fas fa-shield-alt fa-3x mb-3"></i>
+                    <h6>Уязвимости не найдены</h6>
+                    <p>Это хорошо! Продолжайте мониторинг безопасности.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Быстрые действия -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-bolt"></i> Быстрые действия
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3 mb-2">
+                        <a href="{{ url_for('tasks') }}" class="btn btn-primary w-100">
+                            <i class="fas fa-plus"></i> Новая задача
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <a href="{{ url_for('servers') }}" class="btn btn-success w-100">
+                            <i class="fas fa-server"></i> Управление серверами
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <a href="{{ url_for('vulnerabilities') }}" class="btn btn-warning w-100">
+                            <i class="fas fa-bug"></i> Все уязвимости
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <button class="btn btn-info w-100" onclick="location.reload()">
+                            <i class="fas fa-sync"></i> Обновить данные
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+<script>
+// График статистики уязвимостей
+const vulnCtx = document.getElementById('vulnChart').getContext('2d');
+const vulnData = {
+    labels: ['Критичные', 'Высокие', 'Средние', 'Низкие'],
+    datasets: [{
+        data: [
+            {% set critical = vuln_stats|selectattr('severity_level', 'equalto', 'critical')|map(attribute='count')|sum %}{{ critical or 0 }},
+            {% set high = vuln_stats|selectattr('severity_level', 'equalto', 'high')|map(attribute='count')|sum %}{{ high or 0 }},
+            {% set medium = vuln_stats|selectattr('severity_level', 'equalto', 'medium')|map(attribute='count')|sum %}{{ medium or 0 }},
+            {% set low = vuln_stats|selectattr('severity_level', 'equalto', 'low')|map(attribute='count')|sum %}{{ low or 0 }}
+        ],
+        backgroundColor: [
+            '#dc3545',
+            '#ffc107', 
+            '#17a2b8',
+            '#28a745'
+        ],
+        borderWidth: 0
+    }]
+};
+
+new Chart(vulnCtx, {
+    type: 'doughnut',
+    data: vulnData,
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'bottom'
+            }
+        }
+    }
+});
+
+// График статуса серверов
+const serverCtx = document.getElementById('serverChart').getContext('2d');
+const serverData = {
+    labels: ['Онлайн', 'Оффлайн'],
+    datasets: [{
+        data: [
+            {% set online = server_stats|selectattr('status', 'equalto', 'online')|map(attribute='count')|sum %}{{ online or 0 }},
+            {% set offline = server_stats|selectattr('status', 'equalto', 'offline')|map(attribute='count')|sum %}{{ offline or 0 }}
+        ],
+        backgroundColor: [
+            '#28a745',
+            '#dc3545'
+        ],
+        borderWidth: 0
+    }]
+};
+
+new Chart(serverCtx, {
+    type: 'doughnut',
+    data: serverData,
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'bottom'
+            }
+        }
+    }
+});
+
+// Настройка moment.js для русского языка
+moment.locale('ru');
+</script>
+{% endblock %}
+                
