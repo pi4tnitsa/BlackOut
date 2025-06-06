@@ -11,7 +11,7 @@ echo "======================================="
 # Переменные конфигурации
 WORKER_DIR="/opt/nuclei-worker"
 WORKER_USER="nuclei"
-NUCLEI_VERSION="v2.9.15"
+NUCLEI_VERSION="v3.4.4"
 TEMPLATES_DIR="/opt/nuclei-templates"
 
 # URL администраторского сервера (можно передать как аргумент)
