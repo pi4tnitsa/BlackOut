@@ -47,19 +47,14 @@ git clone https://github.com/your-repo/nuclei-scanner.git
 cd nuclei-scanner
 ```
 
-3. Запуск скрипта установки:
+3. Создание и настройка .env файла:
 ```bash
-chmod +x deploy-admin.sh
-sudo ./deploy-admin.sh
-```
+# Создаем директорию для приложения
+sudo mkdir -p /opt/nuclei-admin
+sudo chown -R $USER:$USER /opt/nuclei-admin
 
-4. Настройка переменных окружения:
-```bash
-sudo nano /opt/nuclei-admin/.env
-```
-
-Установите следующие параметры:
-```env
+# Создаем .env файл
+cat > /opt/nuclei-admin/.env << 'EOF'
 # Конфигурация Nuclei Scanner
 SECRET_KEY='your-secret-key'
 
@@ -84,6 +79,17 @@ TELEGRAM_CHAT_ID=your-chat-id
 # Настройки приложения
 DEBUG=False
 PORT=5000
+EOF
+
+# Устанавливаем правильные права
+sudo chown nuclei:nuclei /opt/nuclei-admin/.env
+sudo chmod 600 /opt/nuclei-admin/.env
+```
+
+4. Запуск скрипта установки:
+```bash
+chmod +x deploy-admin.sh
+sudo ./deploy-admin.sh
 ```
 
 5. Проверка установки:
