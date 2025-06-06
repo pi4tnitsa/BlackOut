@@ -173,6 +173,54 @@ setup_app_directory() {
     print_success "Директория приложения создана: $APP_DIR"
 }
 
+# Функция для проверки и создания директорий, переноса файлов
+setup_project_structure() {
+    print_status "Проверка и создание структуры проекта..."
+    
+    # Создание основных директорий
+    mkdir -p "$APP_DIR/templates"
+    mkdir -p "$APP_DIR/static"
+    mkdir -p "$APP_DIR/logs"
+    mkdir -p "$APP_DIR/static/css"
+    mkdir -p "$APP_DIR/static/js"
+    mkdir -p "$APP_DIR/static/img"
+    
+    # Перенос файлов из корня проекта
+    if [ -f "app.py" ]; then
+        cp app.py "$APP_DIR/"
+        chown "$APP_USER:$APP_USER" "$APP_DIR/app.py"
+        print_success "Файл app.py перенесен в $APP_DIR"
+    fi
+    
+    if [ -d "templates" ]; then
+        cp -r templates/* "$APP_DIR/templates/"
+        chown -R "$APP_USER:$APP_USER" "$APP_DIR/templates/"
+        print_success "Шаблоны перенесены в $APP_DIR/templates"
+    fi
+    
+    if [ -d "static" ]; then
+        cp -r static/* "$APP_DIR/static/"
+        chown -R "$APP_USER:$APP_USER" "$APP_DIR/static/"
+        print_success "Статические файлы перенесены в $APP_DIR/static"
+    fi
+    
+    # Проверка и создание необходимых файлов
+    if [ ! -f "$APP_DIR/templates/base.html" ]; then
+        print_warning "Файл base.html не найден в templates"
+    fi
+    
+    if [ ! -f "$APP_DIR/templates/index.html" ]; then
+        print_warning "Файл index.html не найден в templates"
+    fi
+    
+    # Создание пустых файлов, если они отсутствуют
+    touch "$APP_DIR/logs/gunicorn.log"
+    touch "$APP_DIR/logs/celery.log"
+    chown -R "$APP_USER:$APP_USER" "$APP_DIR/logs"
+    
+    print_success "Структура проекта настроена"
+}
+
 # Установка Python-зависимостей
 install_python_deps() {
     print_status "Установка Python зависимостей..."
@@ -557,6 +605,7 @@ main() {
     create_app_user
     setup_postgresql
     setup_app_directory
+    setup_project_structure
     install_python_deps
     deploy_app_files
     setup_config
