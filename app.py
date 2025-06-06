@@ -18,14 +18,18 @@ import time
 import sys
 import signal
 
+# Загружаем переменные окружения из .env файла
+from dotenv import load_dotenv
+load_dotenv()
+
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'nuclei-scanner-secret-key-2025')
 
-# Конфигурация базы данных
+# Конфигурация базы данных с исправленными портами
 DATABASE_URLS = {
-    'belarus': os.environ.get('DB_BELARUS', 'postgresql://nuclei_user:defaultpass@localhost:5432/nuclei_belarus'),
-    'russia': os.environ.get('DB_RUSSIA', 'postgresql://nuclei_user:defaultpass@localhost:5433/nuclei_russia'),
-    'kazakhstan': os.environ.get('DB_KAZAKHSTAN', 'postgresql://nuclei_user:defaultpass@localhost:5434/nuclei_kazakhstan')
+    'belarus': os.environ.get('DB_BELARUS', 'postgresql://nuclei_user:your_secure_password@localhost:5432/nuclei_belarus'),
+    'russia': os.environ.get('DB_RUSSIA', 'postgresql://nuclei_user:your_secure_password@localhost:5432/nuclei_russia'),
+    'kazakhstan': os.environ.get('DB_KAZAKHSTAN', 'postgresql://nuclei_user:your_secure_password@localhost:5432/nuclei_kazakhstan')
 }
 
 # Текущая активная база (можно переключать через админку)
@@ -41,7 +45,13 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     }
 }
 
-db = SQLAlchemy(app)
+# Инициализация базы данных
+db = SQLAlchemy()
+
+def create_app():
+    """Фабрика приложений Flask"""
+    db.init_app(app)
+    return app
 
 # Telegram настройки
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
@@ -510,41 +520,91 @@ def task_complete():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-def create_tables():
-    """Создание таблиц в базе данных"""
+def init_database():
+    """Инициализация базы данных с созданием таблиц"""
     try:
-        with app.app_context():
-            db.create_all()
-            print("[SUCCESS] Таблицы базы данных созданы")
+        print("[INFO] Проверка подключения к базе данных...")
+        
+        # Проверяем подключение
+        db.session.execute(text("SELECT 1"))
+        print("[SUCCESS] Подключение к базе данных успешно")
+        
+        # Создаём таблицы
+        db.create_all()
+        print("[SUCCESS] Таблицы базы данных созданы")
+        
+        # Создаём тестовые данные если их нет
+        if not Server.query.first():
+            sample_server = Server(
+                hostname="nuclei-worker-example",
+                ip_address="127.0.0.1",
+                ssh_port=22,
+                status="offline"
+            )
+            db.session.add(sample_server)
+            
+            sample_template = ScanTemplate(
+                template_id="http-missing-security-headers",
+                name="HTTP Missing Security Headers",
+                description="Проверка отсутствующих заголовков безопасности",
+                severity="info",
+                tags=["http", "headers", "security"]
+            )
+            db.session.add(sample_template)
+            
+            try:
+                db.session.commit()
+                print("[SUCCESS] Тестовые данные созданы")
+            except Exception as e:
+                print(f"[WARNING] Ошибка создания тестовых данных: {e}")
+                db.session.rollback()
+        
+        return True
+        
     except Exception as e:
-        print(f"[ERROR] Ошибка создания таблиц: {e}")
-        raise
-
-def signal_handler(signum, frame):
-    """Handle shutdown signals gracefully"""
-    print("\n[INFO] Shutting down Nuclei Scanner...")
-    sys.exit(0)
+        print(f"[ERROR] Ошибка инициализации базы данных: {e}")
+        print("[INFO] Проверьте:")
+        print("  1. PostgreSQL запущен: sudo systemctl status postgresql")
+        print("  2. База данных создана")
+        print("  3. Права доступа пользователя")
+        print("  4. Параметры подключения в .env файле")
+        return False
 
 if __name__ == '__main__':
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
+    # Создаём приложение
+    app = create_app()
+    
     try:
-        print("[INFO] Инициализация базы данных...")
-        create_tables()
-        
-        # Запуск фонового потока обновления статуса серверов
-        status_thread = threading.Thread(target=update_server_status, daemon=True)
-        status_thread.start()
-        
-        print("[INFO] Запуск Flask приложения...")
-        # Запуск Flask приложения
-        app.run(
-            host='0.0.0.0',
-            port=int(os.environ.get('PORT', 5000)),
-            debug=os.environ.get('DEBUG', 'False').lower() == 'true'
-        )
+        with app.app_context():
+            print("[INFO] Инициализация Nuclei Scanner...")
+            
+            # Инициализируем базу данных
+            if not init_database():
+                print("[ERROR] Не удалось инициализировать базу данных")
+                sys.exit(1)
+            
+            # Запуск фонового потока обновления статуса серверов
+            if not os.environ.get('SKIP_BACKGROUND_TASKS'):
+                status_thread = threading.Thread(target=update_server_status, daemon=True)
+                status_thread.start()
+                print("[INFO] Фоновые задачи запущены")
+            
+            print("[SUCCESS] Nuclei Scanner готов к работе")
+            print(f"[INFO] Веб-интерфейс: http://localhost:{os.environ.get('PORT', 5000)}")
+            print(f"[INFO] Логин: {os.environ.get('ADMIN_USER', 'admin')}")
+            print(f"[INFO] Пароль: {os.environ.get('ADMIN_PASS', 'admin123')}")
+            
+            # Запуск Flask приложения
+            app.run(
+                host='0.0.0.0',
+                port=int(os.environ.get('PORT', 5000)),
+                debug=os.environ.get('DEBUG', 'False').lower() == 'true'
+            )
+            
     except Exception as e:
-        print(f"[ERROR] Failed to start application: {e}")
+        print(f"[ERROR] Ошибка запуска приложения: {e}")
         sys.exit(1)

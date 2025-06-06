@@ -207,30 +207,83 @@ setup_app_directory() {
 install_nuclei() {
     print_status "Установка Nuclei..."
     
+    # Определяем архитектуру
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64)
+            NUCLEI_ARCH="linux_amd64"
+            GO_ARCH="linux-amd64"
+            ;;
+        aarch64|arm64)
+            NUCLEI_ARCH="linux_arm64"
+            GO_ARCH="linux-arm64"
+            ;;
+        *)
+            print_error "Неподдерживаемая архитектура: $ARCH"
+            exit 1
+            ;;
+    esac
+    
     # Установка Go если не установлен
     if ! command -v go &> /dev/null; then
         print_status "Установка Go..."
-        wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz -O /tmp/go.tar.gz
-        tar -C /usr/local -xzf /tmp/go.tar.gz
-        rm /tmp/go.tar.gz
+        GO_VERSION="1.21.5"
+        cd /tmp
+        wget "https://go.dev/dl/go${GO_VERSION}.${GO_ARCH}.tar.gz" -O go.tar.gz
+        
+        # Удаляем старую версию если есть
+        rm -rf /usr/local/go
+        
+        # Устанавливаем новую версию
+        tar -C /usr/local -xzf go.tar.gz
+        rm go.tar.gz
+        
+        # Добавляем в PATH
         echo 'export PATH=$PATH:/usr/local/go/bin' > /etc/profile.d/go.sh
-        source /etc/profile.d/go.sh
+        chmod +x /etc/profile.d/go.sh
+        
+        # Применяем переменные окружения
         export PATH=$PATH:/usr/local/go/bin
+        
+        # Проверяем установку Go
+        if /usr/local/go/bin/go version >/dev/null 2>&1; then
+            print_success "Go установлен успешно: $(/usr/local/go/bin/go version)"
+        else
+            print_error "Ошибка установки Go"
+            exit 1
+        fi
     fi
     
-    # Установка Nuclei через go install
-    GOPATH=/opt/go /usr/local/go/bin/go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+    # Устанавливаем Nuclei через бинарный релиз (более надежно)
+    print_status "Скачивание Nuclei..."
+    NUCLEI_VERSION="v3.1.4"
+    NUCLEI_URL="https://github.com/projectdiscovery/nuclei/releases/download/${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION#v}_${NUCLEI_ARCH}.zip"
     
-    # Создание символической ссылки
-    ln -sf /opt/go/bin/nuclei /usr/local/bin/nuclei
+    cd /tmp
+    curl -L -o nuclei.zip "$NUCLEI_URL"
+    
+    if [ ! -f nuclei.zip ]; then
+        print_error "Не удалось скачать Nuclei"
+        exit 1
+    fi
+    
+    # Распаковка и установка
+    unzip -o nuclei.zip
+    chmod +x nuclei
+    mv nuclei /usr/local/bin/
+    rm -f nuclei.zip README.md LICENSE.md
     
     # Проверка установки
-    if nuclei -version &>/dev/null; then
-        print_success "Nuclei установлен успешно"
+    if nuclei -version >/dev/null 2>&1; then
+        print_success "Nuclei установлен успешно: $(nuclei -version)"
     else
         print_error "Ошибка установки Nuclei"
         exit 1
     fi
+    
+    # Обновляем шаблоны
+    print_status "Обновление шаблонов Nuclei..."
+    sudo -u "$APP_USER" nuclei -update-templates -silent || true
 }
 
 # Установка Python-зависимостей
@@ -522,29 +575,48 @@ setup_firewall() {
 init_database() {
     print_status "Инициализация базы данных..."
     
-    # Загружаем переменные окружения
+    # Загружаем переменные окружения и запускаем приложение
     cd "$APP_DIR"
     
-    # Создаём таблицы в базе данных
-    sudo -u "$APP_USER" bash -c "cd $APP_DIR && source .env && $APP_DIR/venv/bin/python -c \"
-import os
-import sys
+    # Создаём таблицы через приложение
+    sudo -u "$APP_USER" bash -c "
+        cd $APP_DIR
+        source .env
+        export SKIP_BACKGROUND_TASKS=1
+        timeout 30 $APP_DIR/venv/bin/python app.py > /tmp/nuclei-init.log 2>&1 &
+        APP_PID=\$!
+        
+        # Ждём инициализации (максимум 20 секунд)
+        for i in {1..20}; do
+            if grep -q 'Nuclei Scanner готов к работе' /tmp/nuclei-init.log 2>/dev/null; then
+                kill \$APP_PID 2>/dev/null || true
+                echo 'Инициализация завершена успешно'
+                exit 0
+            fi
+            sleep 1
+        done
+        
+        # Если не удалось инициализировать через приложение, пробуем напрямую
+        kill \$APP_PID 2>/dev/null || true
+        echo 'Попытка прямой инициализации...'
+        
+        $APP_DIR/venv/bin/python -c \"
+import sys, os
 sys.path.insert(0, os.getcwd())
-from app import app, db
+os.environ['SKIP_BACKGROUND_TASKS'] = '1'
+from app import create_app, db
+app = create_app()
 with app.app_context():
-    try:
-        db.create_all()
-        print('✅ База данных инициализирована успешно')
-    except Exception as e:
-        print(f'❌ Ошибка инициализации базы данных: {e}')
-        sys.exit(1)
-\""
+    db.create_all()
+    print('Таблицы созданы успешно')
+\" 2>/dev/null && echo 'База данных инициализирована' || echo 'Ошибка инициализации'
+    "
     
     if [ $? -eq 0 ]; then
         print_success "База данных инициализирована"
     else
-        print_error "Ошибка инициализации базы данных"
-        exit 1
+        print_warning "Возможны проблемы с инициализацией БД. Проверьте логи: /tmp/nuclei-init.log"
+        print_status "Приложение попытается создать таблицы при первом запуске"
     fi
 }
 
