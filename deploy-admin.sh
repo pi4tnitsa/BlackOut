@@ -210,9 +210,9 @@ install_python_deps() {
     
     # Создание requirements.txt
     cat > "$APP_DIR/requirements.txt" << 'EOF'
-Flask==2.3.3
-Flask-SQLAlchemy==3.0.5
-Werkzeug==2.3.7
+Flask>=2.3.3
+Flask-SQLAlchemy>=3.0.5
+Werkzeug>=2.3.7
 psycopg2-binary==2.9.7
 SQLAlchemy==2.0.20
 paramiko==3.3.1

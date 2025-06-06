@@ -15,6 +15,8 @@ import requests
 import ipaddress
 from sqlalchemy import text
 import time
+import sys
+import signal
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'nuclei-scanner-secret-key-2025')
@@ -175,18 +177,19 @@ def update_server_status():
     """Фоновая задача обновления статуса серверов"""
     while True:
         try:
-            servers = Server.query.all()
-            for server in servers:
-                result = execute_ssh_command(server, 'echo "ping"')
-                if result['success']:
-                    server.status = 'online'
-                    server.last_seen = datetime.datetime.utcnow()
-                else:
-                    server.status = 'offline'
+            with app.app_context():  # Add app context for thread
+                servers = Server.query.all()
+                for server in servers:
+                    result = execute_ssh_command(server, 'echo "ping"')
+                    if result['success']:
+                        server.status = 'online'
+                        server.last_seen = datetime.datetime.utcnow()
+                    else:
+                        server.status = 'offline'
                 
-            db.session.commit()
+                db.session.commit()
         except Exception as e:
-            print(f"Ошибка обновления статуса серверов: {e}")
+            print(f"[ERROR] Ошибка обновления статуса серверов: {e}")
         
         time.sleep(30)  # Проверяем каждые 30 секунд
 
@@ -486,20 +489,36 @@ def task_complete():
     
     return jsonify({'status': 'ok'})
 
-# Инициализация базы данных
-@app.before_first_request
+# Remove the @app.before_first_request decorator and create a new function
 def create_tables():
     """Создание таблиц в базе данных"""
-    db.create_all()
+    with app.app_context():
+        db.create_all()
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully"""
+    print("\n[INFO] Shutting down Nuclei Scanner...")
+    # Cleanup code here
+    sys.exit(0)
 
 if __name__ == '__main__':
-    # Запуск фонового потока обновления статуса серверов
-    status_thread = threading.Thread(target=update_server_status, daemon=True)
-    status_thread.start()
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     
-    # Запуск Flask приложения
-    app.run(
-        host='0.0.0.0',
-        port=int(os.environ.get('PORT', 5000)),
-        debug=os.environ.get('DEBUG', 'False').lower() == 'true'
-    )
+    try:
+        create_tables()
+        
+        # Запуск фонового потока обновления статуса серверов
+        status_thread = threading.Thread(target=update_server_status, daemon=True)
+        status_thread.start()
+        
+        # Запуск Flask приложения
+        app.run(
+            host='0.0.0.0',
+            port=int(os.environ.get('PORT', 5000)),
+            debug=os.environ.get('DEBUG', 'False').lower() == 'true'
+        )
+    except Exception as e:
+        print(f"[ERROR] Failed to start application: {e}")
+        sys.exit(1)
