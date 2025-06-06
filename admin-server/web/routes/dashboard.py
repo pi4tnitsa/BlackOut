@@ -1,8 +1,6 @@
-# web/routes/dashboard.py - Главная панель управления
+# web/routes/dashboard.py - Исправленная главная панель управления
 from flask import Blueprint, render_template, jsonify
 from flask_login import login_required
-from services.database_service import DatabaseService
-from services.server_monitor import ServerMonitor
 from utils.logger import get_logger
 from datetime import datetime, timedelta
 import os
@@ -10,11 +8,10 @@ import os
 logger = get_logger(__name__)
 dashboard_bp = Blueprint('dashboard', __name__)
 
-# Глобальные сервисы
-db_service = DatabaseService()
-server_monitor = ServerMonitor()
-
+# Инициализация сервисов с обработкой ошибок
 try:
+    from services.database_service import DatabaseService
+    from services.server_monitor import ServerMonitor
     db_service = DatabaseService()
     server_monitor = ServerMonitor()
 except Exception as e:
@@ -27,25 +24,32 @@ except Exception as e:
 def index():
     """Главная страница дашборда"""
     try:
-        if not db_service:
-            return render_template('dashboard.html', error="Ошибка подключения к БД")
-            
         # Получаем статистику уязвимостей
-        vuln_stats = db_service.get_vulnerability_stats()
+        vuln_stats = {}
+        servers = []
+        server_summary = {'total_servers': 0, 'online_servers': 0, 'offline_servers': 0}
+        recent_tasks = []
+        recent_vulnerabilities = []
         
-        # Получаем информацию о серверах
-        servers = db_service.get_servers()
+        if db_service:
+            try:
+                vuln_stats = db_service.get_vulnerability_stats()
+                servers = db_service.get_servers()
+            except Exception as e:
+                logger.error(f"Ошибка получения данных из БД: {e}")
         
         if server_monitor:
-            server_summary = server_monitor.get_monitoring_summary()
-        else:
-            server_summary = {'total_servers': 0, 'online_servers': 0, 'offline_servers': 0}
+            try:
+                server_summary = server_monitor.get_monitoring_summary()
+            except Exception as e:
+                logger.error(f"Ошибка получения статуса серверов: {e}")
         
-        # Получаем последние задачи
-        recent_tasks = db_service.get_tasks()[:10] if db_service else []
-        
-        # Получаем последние уязвимости
-        recent_vulnerabilities = db_service.get_vulnerabilities(limit=10) if db_service else []
+        if db_service:
+            try:
+                recent_tasks = db_service.get_tasks()[:10] if db_service else []
+                recent_vulnerabilities = db_service.get_vulnerabilities(limit=10) if db_service else []
+            except Exception as e:
+                logger.error(f"Ошибка получения последних данных: {e}")
         
         context = {
             'vuln_stats': vuln_stats or {},
@@ -60,8 +64,13 @@ def index():
         
     except Exception as e:
         logger.error(f"Ошибка загрузки дашборда: {e}")
-        return render_template('dashboard.html', error="Ошибка загрузки данных")
-
+        return render_template('dashboard.html', 
+                             error="Ошибка загрузки данных",
+                             vuln_stats={},
+                             server_summary={},
+                             recent_tasks=[],
+                             recent_vulnerabilities=[],
+                             total_servers=0)
 
 @dashboard_bp.route('/api/stats')
 @login_required
@@ -69,15 +78,26 @@ def api_stats():
     """API для получения статистики в реальном времени"""
     try:
         # Статистика уязвимостей
-        vuln_stats = db_service.get_vulnerability_stats()
+        vuln_stats = {}
+        server_summary = {}
+        db_stats = {}
         
-        # Статистика серверов
-        server_summary = server_monitor.get_monitoring_summary()
+        if db_service:
+            try:
+                vuln_stats = db_service.get_vulnerability_stats()
+            except Exception as e:
+                logger.error(f"Ошибка получения статистики уязвимостей: {e}")
+        
+        if server_monitor:
+            try:
+                server_summary = server_monitor.get_monitoring_summary()
+            except Exception as e:
+                logger.error(f"Ошибка получения статистики серверов: {e}")
         
         # Статистика по базам данных
-        db_stats = {}
         for db_name in ['belarus', 'russia', 'kazakhstan']:
             try:
+                from services.database_service import DatabaseService
                 db_srv = DatabaseService(db_name)
                 db_stats[db_name] = db_srv.get_vulnerability_stats()
             except Exception as e:
@@ -104,6 +124,12 @@ def api_stats():
 def api_vulnerability_charts():
     """API для данных графиков уязвимостей"""
     try:
+        if not db_service:
+            return jsonify({
+                'success': False,
+                'error': 'Сервис БД недоступен'
+            })
+        
         # График по типам уязвимостей за последние 30 дней
         query = """
         SELECT 
