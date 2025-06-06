@@ -323,36 +323,41 @@ import signal
 from dotenv import load_dotenv
 load_dotenv()
 
-app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'nuclei-scanner-secret-key-2025')
-
-# Конфигурация базы данных
-DATABASE_URLS = {
-    'belarus': os.environ.get('DB_BELARUS', 'postgresql://nuclei_user:password@localhost:5432/nuclei_scanner_belarus'),
-    'russia': os.environ.get('DB_RUSSIA', 'postgresql://nuclei_user:password@localhost:5432/nuclei_scanner_russia'),
-    'kazakhstan': os.environ.get('DB_KAZAKHSTAN', 'postgresql://nuclei_user:password@localhost:5432/nuclei_scanner_kazakhstan')
-}
-
-# Текущая активная база
-current_db = os.environ.get('CURRENT_DB', 'belarus')
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URLS[current_db]
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_pre_ping': True,
-    'pool_recycle': 300,
-    'connect_args': {
-        'connect_timeout': 10,
-        'application_name': 'nuclei_scanner'
-    }
-}
-
 # Инициализация базы данных
 db = SQLAlchemy()
 
 def create_app():
     """Фабрика приложений Flask"""
+    app = Flask(__name__)
+    app.secret_key = os.environ.get('SECRET_KEY', 'nuclei-scanner-secret-key-2025')
+
+    # Конфигурация базы данных с исправленными портами
+    DATABASE_URLS = {
+        'belarus': os.environ.get('DB_BELARUS', 'postgresql://nuclei_user:your_secure_password@localhost:5432/nuclei_scanner_belarus'),
+        'russia': os.environ.get('DB_RUSSIA', 'postgresql://nuclei_user:your_secure_password@localhost:5432/nuclei_scanner_russia'),
+        'kazakhstan': os.environ.get('DB_KAZAKHSTAN', 'postgresql://nuclei_user:your_secure_password@localhost:5432/nuclei_scanner_kazakhstan')
+    }
+
+    # Текущая активная база (можно переключать через админку)
+    current_db = os.environ.get('CURRENT_DB', 'belarus')
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URLS[current_db]
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,
+        'pool_recycle': 300,
+        'connect_args': {
+            'connect_timeout': 10,
+            'application_name': 'nuclei_scanner'
+        }
+    }
+    
+    # Инициализируем базу данных с приложением
     db.init_app(app)
+    
     return app
+
+# Создаём приложение
+app = create_app()
 
 # Telegram настройки
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
@@ -376,9 +381,9 @@ class ScanTask(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
-    target_ips = db.Column(db.JSON)
-    template_ids = db.Column(db.JSON)
-    server_ids = db.Column(db.JSON)
+    target_ips = db.Column(db.JSON)  # Список IP адресов
+    template_ids = db.Column(db.JSON)  # Список ID шаблонов
+    server_ids = db.Column(db.JSON)  # Список ID серверов
     priority = db.Column(db.Integer, default=1)
     status = db.Column(db.String(50), default='pending')
     schedule_time = db.Column(db.DateTime)
@@ -450,11 +455,12 @@ def parse_target_ips(target_string):
                 network = ipaddress.ip_network(target, strict=False)
                 ips.extend([str(ip) for ip in network.hosts()])
             # Проверяем диапазон
-            elif '-' in target and target.count('.') == 6:
+            elif '-' in target and target.count('.') == 6:  # IP1-IP2 формат
                 start_ip, end_ip = target.split('-')
                 start = ipaddress.ip_address(start_ip.strip())
                 end = ipaddress.ip_address(end_ip.strip())
                 
+                # Проверяем, что оба адреса одного типа (IPv4 или IPv6)
                 if type(start) != type(end):
                     continue
                 current = start
@@ -468,7 +474,7 @@ def parse_target_ips(target_string):
         except ValueError:
             continue
     
-    return list(set(ips))
+    return list(set(ips))  # Убираем дубли
 
 def execute_ssh_command(server, command):
     """Выполнение команды на удалённом сервере через SSH"""
@@ -492,6 +498,26 @@ def execute_ssh_command(server, command):
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
+def update_server_status():
+    """Фоновая задача обновления статуса серверов"""
+    while True:
+        try:
+            with app.app_context():
+                servers = Server.query.all()
+                for server in servers:
+                    result = execute_ssh_command(server, 'echo "ping"')
+                    if result['success']:
+                        server.status = 'online'
+                        server.last_seen = datetime.datetime.utcnow()
+                    else:
+                        server.status = 'offline'
+                
+                db.session.commit()
+        except Exception as e:
+            print(f"[ERROR] Ошибка обновления статуса серверов: {e}")
+        
+        time.sleep(30)  # Проверяем каждые 30 секунд
+
 def signal_handler(signum, frame):
     """Обработчик сигналов"""
     print(f"[INFO] Получен сигнал {signum}, завершение работы...")
@@ -511,6 +537,7 @@ def login():
         username = request.form['username']
         password = request.form['password']
         
+        # Проверка логина/пароля
         admin_user = os.environ.get('ADMIN_USER', 'admin')
         admin_pass = os.environ.get('ADMIN_PASS', 'admin123')
         
@@ -534,22 +561,26 @@ def logout():
 def dashboard():
     """Главная панель управления"""
     try:
+        # Статистика уязвимостей
         vuln_stats = db.session.execute(text("""
             SELECT severity_level, COUNT(*) as count 
             FROM vulnerabilities 
             GROUP BY severity_level
         """)).fetchall()
         
+        # Статус серверов
         server_stats = db.session.execute(text("""
             SELECT status, COUNT(*) as count 
             FROM servers 
             GROUP BY status
         """)).fetchall()
         
+        # Активные задачи
         active_tasks = ScanTask.query.filter(
             ScanTask.status.in_(['pending', 'running'])
         ).count()
         
+        # Последние уязвимости
         recent_vulns = Vulnerability.query.order_by(
             Vulnerability.discovered_at.desc()
         ).limit(10).all()
@@ -570,8 +601,12 @@ def dashboard():
 @app.route('/servers')
 def servers():
     """Управление серверами"""
-    servers_list = Server.query.all()
-    return render_template('servers.html', servers=servers_list)
+    try:
+        servers_list = Server.query.all()
+        return render_template('servers.html', servers=servers_list)
+    except Exception as e:
+        flash(f'Ошибка загрузки серверов: {str(e)}')
+        return render_template('servers.html', servers=[])
 
 @app.route('/servers/add', methods=['POST'])
 def add_server():
@@ -613,14 +648,21 @@ def delete_server(server_id):
 @app.route('/tasks')
 def tasks():
     """Управление задачами сканирования"""
-    tasks_list = ScanTask.query.order_by(ScanTask.created_at.desc()).all()
-    servers_list = Server.query.filter_by(status='online').all()
-    templates_list = ScanTemplate.query.all()
-    
-    return render_template('tasks.html', 
-                         tasks=tasks_list,
-                         servers=servers_list,
-                         templates=templates_list)
+    try:
+        tasks_list = ScanTask.query.order_by(ScanTask.created_at.desc()).all()
+        servers_list = Server.query.filter_by(status='online').all()
+        templates_list = ScanTemplate.query.all()
+        
+        return render_template('tasks.html', 
+                             tasks=tasks_list,
+                             servers=servers_list,
+                             templates=templates_list)
+    except Exception as e:
+        flash(f'Ошибка загрузки задач: {str(e)}')
+        return render_template('tasks.html', 
+                             tasks=[],
+                             servers=[],
+                             templates=[])
 
 @app.route('/tasks/create', methods=['POST'])
 def create_task():
@@ -667,6 +709,7 @@ def start_task(task_id):
             flash('Задача уже выполняется или завершена')
             return redirect(url_for('tasks'))
         
+        # Распределяем IP адреса по серверам
         available_servers = Server.query.filter(
             Server.id.in_(task.server_ids),
             Server.status == 'online'
@@ -676,6 +719,7 @@ def start_task(task_id):
             flash('Нет доступных серверов для выполнения задачи')
             return redirect(url_for('tasks'))
         
+        # Простое распределение нагрузки
         ips_per_server = len(task.target_ips) // len(available_servers)
         
         for i, server in enumerate(available_servers):
@@ -683,6 +727,7 @@ def start_task(task_id):
             end_idx = start_idx + ips_per_server if i < len(available_servers) - 1 else len(task.target_ips)
             server_ips = task.target_ips[start_idx:end_idx]
             
+            # Отправляем команду на сервер
             command = f"""
             cd /opt/nuclei-worker && python3 worker.py \
             --task-id {task.id} \
@@ -710,18 +755,27 @@ def start_task(task_id):
 @app.route('/vulnerabilities')
 def vulnerabilities():
     """Просмотр найденных уязвимостей"""
-    page = request.args.get('page', 1, type=int)
-    severity = request.args.get('severity', '')
-    
-    query = Vulnerability.query
-    if severity:
-        query = query.filter_by(severity_level=severity)
-    
-    vulns = query.order_by(Vulnerability.discovered_at.desc()).paginate(
-        page=page, per_page=50, error_out=False
-    )
-    
-    return render_template('vulnerabilities.html', vulnerabilities=vulns)
+    try:
+        page = request.args.get('page', 1, type=int)
+        severity = request.args.get('severity', '')
+        
+        query = Vulnerability.query
+        if severity:
+            query = query.filter_by(severity_level=severity)
+        
+        vulns = query.order_by(Vulnerability.discovered_at.desc()).paginate(
+            page=page, per_page=50, error_out=False
+        )
+        
+        return render_template('vulnerabilities.html', vulnerabilities=vulns)
+    except Exception as e:
+        flash(f'Ошибка загрузки уязвимостей: {str(e)}')
+        # Создаём пустой объект пагинации для отображения
+        class EmptyPagination:
+            items = []
+            pages = 0
+            
+        return render_template('vulnerabilities.html', vulnerabilities=EmptyPagination())
 
 # API для воркеров
 @app.route('/api/worker/heartbeat', methods=['POST'])
@@ -763,6 +817,7 @@ def submit_vulnerability():
         db.session.add(vuln)
         db.session.commit()
         
+        # Уведомление о критичных уязвимостях
         if data['severity_level'] in ['critical', 'high']:
             message = f"🚨 Найдена {data['severity_level']} уязвимость!\n"
             message += f"IP: {data['ip_address']}\n"
@@ -801,12 +856,15 @@ def init_database():
     try:
         print("[INFO] Проверка подключения к базе данных...")
         
+        # Проверяем подключение
         db.session.execute(text("SELECT 1"))
         print("[SUCCESS] Подключение к базе данных успешно")
         
+        # Создаём таблицы
         db.create_all()
         print("[SUCCESS] Таблицы базы данных созданы")
         
+        # Создаём тестовые данные если их нет
         if not Server.query.first():
             sample_server = Server(
                 hostname="nuclei-worker-example",
@@ -848,22 +906,27 @@ if __name__ == '__main__':
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    # Создаём приложение
-    app = create_app()
-    
     try:
         with app.app_context():
             print("[INFO] Инициализация Nuclei Scanner...")
             
+            # Инициализируем базу данных
             if not init_database():
                 print("[ERROR] Не удалось инициализировать базу данных")
                 sys.exit(1)
+            
+            # Запуск фонового потока обновления статуса серверов
+            if not os.environ.get('SKIP_BACKGROUND_TASKS'):
+                status_thread = threading.Thread(target=update_server_status, daemon=True)
+                status_thread.start()
+                print("[INFO] Фоновые задачи запущены")
             
             print("[SUCCESS] Nuclei Scanner готов к работе")
             print(f"[INFO] Веб-интерфейс: http://localhost:{os.environ.get('PORT', 5000)}")
             print(f"[INFO] Логин: {os.environ.get('ADMIN_USER', 'admin')}")
             print(f"[INFO] Пароль: {os.environ.get('ADMIN_PASS', 'admin123')}")
             
+            # Запуск Flask приложения
             app.run(
                 host='0.0.0.0',
                 port=int(os.environ.get('PORT', 5000)),
