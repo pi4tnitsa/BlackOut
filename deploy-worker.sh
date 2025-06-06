@@ -5,13 +5,13 @@
 
 set -e
 
-echo "🔧 Развёртывание Nuclei Scanner - Воркер"
-echo "======================================="
+echo "🔧 Развёртывание Nuclei Scanner - Воркер (исправленная версия)"
+echo "=============================================================="
 
 # Переменные конфигурации
 WORKER_DIR="/opt/nuclei-worker"
 WORKER_USER="nuclei"
-NUCLEI_VERSION="v3.4.4"
+NUCLEI_VERSION="v3.1.4"  # Обновленная версия
 TEMPLATES_DIR="/opt/nuclei-templates"
 
 # URL администраторского сервера (можно передать как аргумент)
@@ -140,12 +140,17 @@ create_worker_user() {
 setup_directories() {
     print_status "Создание рабочих директорий..."
     
+    # Удаляем старые директории если есть проблемы
+    rm -rf "$WORKER_DIR" "$TEMPLATES_DIR" 2>/dev/null || true
+    
+    # Создаём директории
     mkdir -p "$WORKER_DIR"
     mkdir -p "$WORKER_DIR/logs"
     mkdir -p "$WORKER_DIR/results"
     mkdir -p "$TEMPLATES_DIR"
     mkdir -p "/home/$WORKER_USER/.nuclei"
     
+    # Устанавливаем права
     chown -R "$WORKER_USER:$WORKER_USER" "$WORKER_DIR"
     chown -R "$WORKER_USER:$WORKER_USER" "$TEMPLATES_DIR"
     chown -R "$WORKER_USER:$WORKER_USER" "/home/$WORKER_USER/.nuclei"
@@ -162,7 +167,11 @@ install_nuclei() {
     
     # Скачивание Nuclei
     cd "$TEMP_DIR"
-    curl -L -o nuclei.zip "$NUCLEI_URL"
+    print_status "Скачивание с $NUCLEI_URL"
+    curl -L -o nuclei.zip "$NUCLEI_URL" || {
+        print_error "Не удалось скачать Nuclei"
+        exit 1
+    }
     
     # Распаковка и установка
     unzip nuclei.zip
@@ -171,7 +180,7 @@ install_nuclei() {
     
     # Проверка установки
     if nuclei -version >/dev/null 2>&1; then
-        print_success "Nuclei успешно установлен: $(nuclei -version)"
+        print_success "Nuclei успешно установлен: $(nuclei -version 2>&1 | head -1)"
     else
         print_error "Ошибка установки Nuclei"
         exit 1
@@ -185,17 +194,31 @@ install_nuclei() {
 install_nuclei_templates() {
     print_status "Установка шаблонов Nuclei..."
     
-    # Обновление шаблонов через Nuclei
-    sudo -u "$WORKER_USER" nuclei -update-templates -silent
+    # Сначала обновляем шаблоны через Nuclei (они сохраняются в ~/.nuclei)
+    print_status "Обновление встроенных шаблонов..."
+    sudo -u "$WORKER_USER" nuclei -update-templates -silent || {
+        print_warning "Не удалось обновить встроенные шаблоны"
+    }
     
-    # Альтернативный способ - клонирование репозитория
-    if [ ! -d "$TEMPLATES_DIR/.git" ]; then
-        print_status "Клонирование репозитория шаблонов..."
-        sudo -u "$WORKER_USER" git clone https://github.com/projectdiscovery/nuclei-templates.git "$TEMPLATES_DIR"
+    # Теперь клонируем репозиторий шаблонов в отдельную директорию
+    print_status "Клонирование репозитория шаблонов..."
+    
+    # Переходим в безопасную директорию перед клонированием
+    cd /tmp
+    
+    # Удаляем существующую директорию если есть
+    rm -rf "$TEMPLATES_DIR" 2>/dev/null || true
+    
+    # Клонируем репозиторий как root, потом меняем права
+    if git clone https://github.com/projectdiscovery/nuclei-templates.git "$TEMPLATES_DIR"; then
+        # Меняем владельца на пользователя воркера
+        chown -R "$WORKER_USER:$WORKER_USER" "$TEMPLATES_DIR"
+        print_success "Репозиторий шаблонов успешно клонирован"
     else
-        print_status "Обновление репозитория шаблонов..."
-        cd "$TEMPLATES_DIR"
-        sudo -u "$WORKER_USER" git pull
+        print_warning "Не удалось клонировать репозиторий шаблонов"
+        print_status "Создаём пустую директорию шаблонов..."
+        mkdir -p "$TEMPLATES_DIR"
+        chown -R "$WORKER_USER:$WORKER_USER" "$TEMPLATES_DIR"
     fi
     
     print_success "Шаблоны Nuclei установлены"
@@ -225,33 +248,413 @@ EOF
     print_success "Python зависимости установлены"
 }
 
-# Копирование скрипта воркера
+# Развёртывание скрипта воркера
 deploy_worker_script() {
     print_status "Развёртывание скрипта воркера..."
     
-    # Копируем скрипт воркера (предполагается, что он находится в текущей директории)
-    if [ -f "worker.py" ]; then
-        cp worker.py "$WORKER_DIR/"
-        chown "$WORKER_USER:$WORKER_USER" "$WORKER_DIR/worker.py"
-        chmod +x "$WORKER_DIR/worker.py"
-    else
-        print_warning "Файл worker.py не найден в текущей директории"
-        print_status "Создаём базовый скрипт воркера..."
-        
-        # Создаём минимальный скрипт воркера
-        cat > "$WORKER_DIR/worker.py" << 'EOF'
+    # Создаём полный рабочий скрипт воркера
+    cat > "$WORKER_DIR/worker.py" << 'EOF'
 #!/usr/bin/env python3
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# -*- coding: utf-8 -*-
 
-# Импортируем основной класс воркера
-# Здесь должен быть импорт из основного файла worker.py
+import os
+import sys
+import json
+import time
+import argparse
+import subprocess
+import threading
+import requests
+import logging
+from datetime import datetime
+import signal
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('/opt/nuclei-worker/logs/worker.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+class NucleiWorker:
+    def __init__(self, server_url, server_id=None):
+        self.server_url = server_url.rstrip('/')
+        self.server_id = server_id or self._get_server_id()
+        self.running = True
+        self.nuclei_path = self._find_nuclei_binary()
+        self.templates_path = '/opt/nuclei-templates'
+        
+        # Создаём директории если не существуют
+        os.makedirs('/tmp/nuclei-results', exist_ok=True)
+        os.makedirs(self.templates_path, exist_ok=True)
+        
+        logger.info(f"Воркер инициализирован. Server ID: {self.server_id}")
+    
+    def _get_server_id(self):
+        """Получение ID сервера по IP адресу"""
+        try:
+            import socket
+            hostname = socket.gethostname()
+            local_ip = socket.gethostbyname(hostname)
+            return 1
+        except Exception as e:
+            logger.error(f"Ошибка получения server_id: {e}")
+            return 1
+    
+    def _find_nuclei_binary(self):
+        """Поиск исполняемого файла Nuclei"""
+        paths = ['/usr/local/bin/nuclei', '/usr/bin/nuclei', '/opt/nuclei/nuclei', 'nuclei']
+        
+        for path in paths:
+            try:
+                result = subprocess.run([path, '-version'], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    logger.info(f"Найден Nuclei: {path}")
+                    return path
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                continue
+        
+        logger.error("Nuclei не найден в системе!")
+        sys.exit(1)
+    
+    def update_nuclei_templates(self):
+        """Обновление шаблонов Nuclei"""
+        try:
+            logger.info("Обновление шаблонов Nuclei...")
+            
+            # Обновляем встроенные шаблоны
+            result = subprocess.run([
+                self.nuclei_path, '-update-templates', '-silent'
+            ], capture_output=True, text=True, timeout=300)
+            
+            if result.returncode == 0:
+                logger.info("Шаблоны Nuclei успешно обновлены")
+            else:
+                logger.warning(f"Предупреждение при обновлении шаблонов: {result.stderr}")
+                
+        except subprocess.TimeoutExpired:
+            logger.error("Таймаут при обновлении шаблонов")
+        except Exception as e:
+            logger.error(f"Ошибка обновления шаблонов: {e}")
+    
+    def send_heartbeat(self):
+        """Отправка heartbeat на центральный сервер"""
+        while self.running:
+            try:
+                data = {
+                    'server_id': self.server_id,
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'status': 'online'
+                }
+                
+                response = requests.post(
+                    f"{self.server_url}/api/worker/heartbeat",
+                    json=data,
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    logger.debug("Heartbeat отправлен успешно")
+                else:
+                    logger.warning(f"Ошибка отправки heartbeat: {response.status_code}")
+                    
+            except Exception as e:
+                logger.error(f"Ошибка отправки heartbeat: {e}")
+            
+            time.sleep(30)
+    
+    def submit_vulnerability(self, vulnerability_data):
+        """Отправка найденной уязвимости на сервер"""
+        try:
+            vulnerability_data['source_server_id'] = self.server_id
+            
+            response = requests.post(
+                f"{self.server_url}/api/worker/submit_vulnerability",
+                json=vulnerability_data,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"Уязвимость отправлена: {vulnerability_data['template_id']} -> {vulnerability_data['ip_address']}")
+                return True
+            else:
+                logger.error(f"Ошибка отправки уязвимости: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Ошибка отправки уязвимости: {e}")
+            return False
+    
+    def notify_task_complete(self, task_id):
+        """Уведомление о завершении задачи"""
+        try:
+            data = {
+                'task_id': task_id,
+                'server_id': self.server_id,
+                'completed_at': datetime.utcnow().isoformat()
+            }
+            
+            response = requests.post(
+                f"{self.server_url}/api/worker/task_complete",
+                json=data,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"Уведомление о завершении задачи {task_id} отправлено")
+            else:
+                logger.error(f"Ошибка отправки уведомления о завершении: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"Ошибка отправки уведомления о завершении: {e}")
+    
+    def parse_nuclei_output(self, output_line):
+        """Парсинг вывода Nuclei"""
+        try:
+            if output_line.strip().startswith('{') and output_line.strip().endswith('}'):
+                data = json.loads(output_line.strip())
+                
+                vulnerability = {
+                    'ip_address': data.get('host', '').replace('http://', '').replace('https://', '').split(':')[0],
+                    'template_id': data.get('template-id', ''),
+                    'matcher_name': data.get('matcher-name', ''),
+                    'severity_level': data.get('info', {}).get('severity', 'unknown'),
+                    'url': data.get('matched-at', ''),
+                    'request_data': json.dumps(data.get('request', {})),
+                    'response_data': json.dumps(data.get('response', {})),
+                    'vuln_metadata': {
+                        'template_info': data.get('info', {}),
+                        'curl_command': data.get('curl-command', ''),
+                        'raw_data': data
+                    }
+                }
+                
+                return vulnerability
+                
+        except json.JSONDecodeError:
+            logger.debug(f"Не удалось распарсить как JSON: {output_line}")
+        except Exception as e:
+            logger.error(f"Ошибка парсинга вывода Nuclei: {e}")
+        
+        return None
+    
+    def run_nuclei_scan(self, targets, templates, task_id):
+        """Выполнение сканирования Nuclei"""
+        logger.info(f"Запуск сканирования задачи {task_id}: {len(targets)} целей")
+        
+        targets_file = f'/tmp/nuclei-targets-{task_id}.txt'
+        with open(targets_file, 'w') as f:
+            for target in targets:
+                f.write(f"{target}\n")
+        
+        try:
+            cmd = [
+                self.nuclei_path,
+                '-l', targets_file,
+                '-json',
+                '-silent',
+                '-timeout', '10',
+                '-retries', '1',
+                '-rate-limit', '100'
+            ]
+            
+            if templates and templates != ['']:
+                for template in templates:
+                    if template:
+                        cmd.extend(['-t', template])
+            
+            logger.info(f"Команда Nuclei: {' '.join(cmd)}")
+            
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+            
+            vulnerabilities_found = 0
+            
+            if process.stdout:
+                for line in iter(process.stdout.readline, ''):
+                    if not self.running:
+                        process.terminate()
+                        break
+                    
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    vulnerability = self.parse_nuclei_output(line)
+                    if vulnerability:
+                        vulnerability['task_id'] = task_id
+                        
+                        if self.submit_vulnerability(vulnerability):
+                            vulnerabilities_found += 1
+                        
+                        logger.info(f"Найдена уязвимость: {vulnerability['template_id']} -> {vulnerability['ip_address']}")
+            
+            process.wait()
+            
+            logger.info(f"Сканирование задачи {task_id} завершено. Найдено уязвимостей: {vulnerabilities_found}")
+            
+            self.notify_task_complete(task_id)
+            
+            return vulnerabilities_found
+            
+        except Exception as e:
+            logger.error(f"Ошибка выполнения сканирования: {e}")
+            return 0
+        finally:
+            try:
+                os.remove(targets_file)
+            except:
+                pass
+    
+    def start_daemon_mode(self):
+        """Запуск воркера в режиме демона"""
+        logger.info("Запуск воркера в режиме демона")
+        
+        heartbeat_thread = threading.Thread(target=self.send_heartbeat, daemon=True)
+        heartbeat_thread.start()
+        
+        self.update_nuclei_templates()
+        
+        while self.running:
+            try:
+                time.sleep(10)
+            except KeyboardInterrupt:
+                logger.info("Получен сигнал остановки")
+                self.stop()
+                break
+            except Exception as e:
+                logger.error(f"Ошибка в основном цикле: {e}")
+                time.sleep(5)
+    
+    def execute_single_task(self, task_id, targets, templates):
+        """Выполнение одной задачи сканирования"""
+        try:
+            heartbeat_thread = threading.Thread(target=self.send_heartbeat, daemon=True)
+            heartbeat_thread.start()
+            
+            results = self.run_nuclei_scan(targets, templates, task_id)
+            
+            logger.info(f"Задача {task_id} выполнена. Результатов: {results}")
+            
+        except Exception as e:
+            logger.error(f"Ошибка выполнения задачи {task_id}: {e}")
+        finally:
+            self.stop()
+    
+    def stop(self):
+        """Остановка воркера"""
+        logger.info("Остановка воркера...")
+        self.running = False
+    
+    def self_diagnostics(self):
+        """Самодиагностика воркера"""
+        logger.info("Запуск самодиагностики...")
+        
+        try:
+            result = subprocess.run([self.nuclei_path, '-version'], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                logger.info(f"Nuclei доступен: {result.stdout.strip()}")
+            else:
+                logger.error(f"Проблема с Nuclei: {result.stderr}")
+                return False
+        except Exception as e:
+            logger.error(f"Nuclei недоступен: {e}")
+            return False
+        
+        try:
+            response = requests.get(f"{self.server_url}/", timeout=10)
+            if response.status_code == 200:
+                logger.info("Центральный сервер доступен")
+            else:
+                logger.warning(f"Сервер вернул код: {response.status_code}")
+        except Exception as e:
+            logger.error(f"Центральный сервер недоступен: {e}")
+            return False
+        
+        logger.info("Самодиагностика завершена")
+        return True
+
+def signal_handler(signum, frame):
+    """Обработчик сигналов"""
+    logger.info(f"Получен сигнал {signum}")
+    sys.exit(0)
+
+def main():
+    """Главная функция"""
+    parser = argparse.ArgumentParser(description='Nuclei Scanner Worker')
+    
+    parser.add_argument('--server-url', required=True,
+                       help='URL центрального сервера')
+    parser.add_argument('--server-id', type=int,
+                       help='ID данного сервера')
+    parser.add_argument('--task-id', type=int,
+                       help='ID задачи для выполнения')
+    parser.add_argument('--targets',
+                       help='JSON строка с целевыми IP адресами')
+    parser.add_argument('--templates',
+                       help='JSON строка с ID шаблонов')
+    parser.add_argument('--daemon', action='store_true',
+                       help='Запуск в режиме демона')
+    parser.add_argument('--diagnostics', action='store_true',
+                       help='Выполнить самодиагностику')
+    parser.add_argument('--update-templates', action='store_true',
+                       help='Обновить шаблоны Nuclei')
+    
+    args = parser.parse_args()
+    
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    worker = NucleiWorker(args.server_url, args.server_id)
+    
+    try:
+        if args.diagnostics:
+            success = worker.self_diagnostics()
+            sys.exit(0 if success else 1)
+        
+        elif args.update_templates:
+            worker.update_nuclei_templates()
+            sys.exit(0)
+        
+        elif args.daemon:
+            worker.start_daemon_mode()
+        
+        elif args.task_id and args.targets:
+            targets = json.loads(args.targets)
+            templates = json.loads(args.templates) if args.templates else []
+            
+            worker.execute_single_task(args.task_id, targets, templates)
+        
+        else:
+            parser.print_help()
+            sys.exit(1)
+    
+    except KeyboardInterrupt:
+        logger.info("Прерывание работы пользователем")
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {e}")
+        sys.exit(1)
+    finally:
+        worker.stop()
 
 if __name__ == '__main__':
-    print("Базовый скрипт воркера. Замените на полную версию.")
+    main()
 EOF
-    fi
+    
+    chown "$WORKER_USER:$WORKER_USER" "$WORKER_DIR/worker.py"
+    chmod +x "$WORKER_DIR/worker.py"
     
     print_success "Скрипт воркера развёрнут"
 }
@@ -292,19 +695,16 @@ EOF
 setup_ssh() {
     print_status "Настройка SSH доступа..."
     
-    # Создание SSH директории
     SSH_DIR="/home/$WORKER_USER/.ssh"
     sudo -u "$WORKER_USER" mkdir -p "$SSH_DIR"
     sudo -u "$WORKER_USER" chmod 700 "$SSH_DIR"
     
-    # Создание authorized_keys файла
     sudo -u "$WORKER_USER" touch "$SSH_DIR/authorized_keys"
     sudo -u "$WORKER_USER" chmod 600 "$SSH_DIR/authorized_keys"
     
-    # Настройка SSH daemon
     if ! grep -q "^AllowUsers.*$WORKER_USER" /etc/ssh/sshd_config; then
         echo "AllowUsers root $WORKER_USER" >> /etc/ssh/sshd_config
-        systemctl restart sshd
+        systemctl restart sshd || systemctl restart ssh
     fi
     
     print_success "SSH настроен"
@@ -327,66 +727,126 @@ stdout_logfile=$WORKER_DIR/logs/supervisor.log
 stdout_logfile_maxbytes=50MB
 stdout_logfile_backups=5
 environment=PATH="$WORKER_DIR/venv/bin"
-
-[program:nuclei-worker-updater]
-command=$WORKER_DIR/venv/bin/python $WORKER_DIR/worker.py --update-templates
-directory=$WORKER_DIR
-user=$WORKER_USER
-autostart=false
-autorestart=false
-redirect_stderr=true
-stdout_logfile=$WORKER_DIR/logs/updater.log
-stdout_logfile_maxbytes=10MB
-stdout_logfile_backups=3
-environment=PATH="$WORKER_DIR/venv/bin"
 EOF
 
-    # Перезапуск Supervisor
     systemctl restart supervisor
     systemctl enable supervisor
     
-    # Обновление конфигурации
-    supervisorctl reread
-    supervisorctl update
+    supervisorctl reread || true
+    supervisorctl update || true
     
     print_success "Supervisor настроен"
 }
 
-# Создание systemd сервиса
-create_systemd_service() {
-    print_status "Создание systemd сервиса..."
+# Создание скрипта диагностики
+create_diagnostic_script() {
+    print_status "Создание скрипта диагностики..."
     
-    cat > /etc/systemd/system/nuclei-worker.service << EOF
-[Unit]
-Description=Nuclei Scanner Worker
-After=network.target
+    cat > "$WORKER_DIR/diagnostics.sh" << 'EOF'
+#!/bin/bash
+# Скрипт диагностики воркера
 
-[Service]
-Type=simple
-User=$WORKER_USER
-WorkingDirectory=$WORKER_DIR
-Environment=PATH=$WORKER_DIR/venv/bin
-ExecStart=$WORKER_DIR/venv/bin/python $WORKER_DIR/worker.py --daemon --server-url $ADMIN_SERVER_URL
-Restart=always
-RestartSec=10
-KillMode=mixed
-TimeoutStopSec=30
+WORKER_DIR="/opt/nuclei-worker"
 
-[Install]
-WantedBy=multi-user.target
+echo "🔍 Диагностика Nuclei Worker"
+echo "============================"
+
+echo "Nuclei версия:"
+nuclei -version 2>/dev/null || echo "❌ Nuclei недоступен"
+
+echo -e "\nPython версия:"
+"$WORKER_DIR/venv/bin/python" --version 2>/dev/null || echo "❌ Python недоступен"
+
+echo -e "\nДисковое пространство:"
+df -h "$WORKER_DIR" | tail -1
+
+echo -e "\nИспользование памяти:"
+free -h
+
+echo -e "\nПроцессы воркера:"
+ps aux | grep -E "(nuclei|worker)" | grep -v grep
+
+echo -e "\nПоследние записи в логах:"
+if [ -f "$WORKER_DIR/logs/worker.log" ]; then
+    tail -5 "$WORKER_DIR/logs/worker.log"
+else
+    echo "Логи не найдены"
+fi
+
+echo -e "\nПроверка связи с центральным сервером:"
+if [ -f "$WORKER_DIR/.env" ]; then
+    ADMIN_URL=$(grep ADMIN_SERVER_URL "$WORKER_DIR/.env" | cut -d'=' -f2)
+    if curl -s --connect-timeout 5 "$ADMIN_URL" >/dev/null; then
+        echo "✅ Связь с $ADMIN_URL установлена"
+    else
+        echo "❌ Нет связи с $ADMIN_URL"
+    fi
+else
+    echo "❌ Конфигурация не найдена"
+fi
+
+echo -e "\nШаблоны Nuclei:"
+TEMPLATE_COUNT=$(find /opt/nuclei-templates -name "*.yaml" -o -name "*.yml" 2>/dev/null | wc -l)
+echo "Найдено шаблонов: $TEMPLATE_COUNT"
+
+echo -e "\n✅ Диагностика завершена"
 EOF
 
-    systemctl daemon-reload
-    systemctl enable nuclei-worker
+    chmod +x "$WORKER_DIR/diagnostics.sh"
+    chown "$WORKER_USER:$WORKER_USER" "$WORKER_DIR/diagnostics.sh"
     
-    print_success "Systemd сервис создан"
+    print_success "Скрипт диагностики создан"
+}
+
+# Создание скрипта обновления
+create_update_script() {
+    print_status "Создание скрипта обновления..."
+    
+    cat > "$WORKER_DIR/update.sh" << 'EOF'
+#!/bin/bash
+# Скрипт обновления воркера
+
+WORKER_DIR="/opt/nuclei-worker"
+WORKER_USER="nuclei"
+
+echo "🔄 Обновление Nuclei Worker..."
+
+# Остановка сервиса
+echo "Остановка сервиса..."
+supervisorctl stop nuclei-worker 2>/dev/null || true
+
+# Обновление шаблонов
+echo "Обновление шаблонов Nuclei..."
+sudo -u "$WORKER_USER" nuclei -update-templates -silent
+
+# Обновление зависимостей Python
+echo "Обновление Python зависимостей..."
+sudo -u "$WORKER_USER" "$WORKER_DIR/venv/bin/pip" install --upgrade -r "$WORKER_DIR/requirements.txt"
+
+# Обновление репозитория шаблонов
+if [ -d "/opt/nuclei-templates/.git" ]; then
+    echo "Обновление репозитория шаблонов..."
+    cd /opt/nuclei-templates
+    sudo -u "$WORKER_USER" git pull
+fi
+
+# Запуск сервиса
+echo "Запуск сервиса..."
+supervisorctl start nuclei-worker 2>/dev/null || true
+
+echo "✅ Обновление завершено"
+EOF
+
+    chmod +x "$WORKER_DIR/update.sh"
+    chown "$WORKER_USER:$WORKER_USER" "$WORKER_DIR/update.sh"
+    
+    print_success "Скрипт обновления создан"
 }
 
 # Настройка cron задач
 setup_cron() {
     print_status "Настройка cron задач..."
     
-    # Создание cron задач для пользователя воркера
     cat > /tmp/nuclei-worker-cron << EOF
 # Обновление шаблонов каждый день в 3:00
 0 3 * * * $WORKER_DIR/venv/bin/python $WORKER_DIR/worker.py --update-templates >/dev/null 2>&1
@@ -418,7 +878,7 @@ $WORKER_DIR/logs/*.log {
     notifempty
     create 644 $WORKER_USER $WORKER_USER
     postrotate
-        supervisorctl restart nuclei-worker 2>/dev/null || systemctl restart nuclei-worker
+        supervisorctl restart nuclei-worker 2>/dev/null || true
     endscript
 }
 EOF
@@ -426,97 +886,15 @@ EOF
     print_success "Логротация настроена"
 }
 
-# Настройка мониторинга
-setup_monitoring() {
-    print_status "Настройка мониторинга..."
-    
-    # Создание скрипта мониторинга
-    cat > "$WORKER_DIR/monitor.sh" << 'EOF'
-#!/bin/bash
-# Скрипт мониторинга воркера
-
-WORKER_DIR="/opt/nuclei-worker"
-LOG_FILE="$WORKER_DIR/logs/monitor.log"
-
-check_nuclei() {
-    if ! nuclei -version >/dev/null 2>&1; then
-        echo "$(date): ERROR - Nuclei недоступен" >> "$LOG_FILE"
-        return 1
-    fi
-    return 0
-}
-
-check_python() {
-    if ! "$WORKER_DIR/venv/bin/python" --version >/dev/null 2>&1; then
-        echo "$(date): ERROR - Python недоступен" >> "$LOG_FILE"
-        return 1
-    fi
-    return 0
-}
-
-check_disk_space() {
-    DISK_USAGE=$(df "$WORKER_DIR" | tail -1 | awk '{print $5}' | sed 's/%//')
-    if [ "$DISK_USAGE" -gt 90 ]; then
-        echo "$(date): WARNING - Диск заполнен на $DISK_USAGE%" >> "$LOG_FILE"
-        return 1
-    fi
-    return 0
-}
-
-check_connectivity() {
-    if ! curl -s --connect-timeout 5 "$ADMIN_SERVER_URL" >/dev/null; then
-        echo "$(date): ERROR - Нет связи с центральным сервером" >> "$LOG_FILE"
-        return 1
-    fi
-    return 0
-}
-
-main() {
-    echo "$(date): Запуск проверки мониторинга" >> "$LOG_FILE"
-    
-    ERRORS=0
-    
-    check_nuclei || ((ERRORS++))
-    check_python || ((ERRORS++))
-    check_disk_space || ((ERRORS++))
-    check_connectivity || ((ERRORS++))
-    
-    if [ $ERRORS -eq 0 ]; then
-        echo "$(date): Все проверки пройдены успешно" >> "$LOG_FILE"
-    else
-        echo "$(date): Обнаружено $ERRORS ошибок" >> "$LOG_FILE"
-        
-        # Попытка перезапуска при критических ошибках
-        if [ $ERRORS -gt 2 ]; then
-            echo "$(date): Критические ошибки - перезапуск сервиса" >> "$LOG_FILE"
-            supervisorctl restart nuclei-worker 2>/dev/null || systemctl restart nuclei-worker
-        fi
-    fi
-}
-
-main "$@"
-EOF
-
-    chmod +x "$WORKER_DIR/monitor.sh"
-    chown "$WORKER_USER:$WORKER_USER" "$WORKER_DIR/monitor.sh"
-    
-    # Добавление в cron
-    (sudo -u "$WORKER_USER" crontab -l 2>/dev/null; echo "*/10 * * * * $WORKER_DIR/monitor.sh") | sudo -u "$WORKER_USER" crontab -
-    
-    print_success "Мониторинг настроен"
-}
-
 # Настройка firewall
 setup_firewall() {
     print_status "Настройка firewall..."
     
     if command -v ufw >/dev/null 2>&1; then
-        # Ubuntu/Debian UFW
         ufw allow ssh
         ufw --force enable
         print_success "UFW firewall настроен"
     elif command -v firewall-cmd >/dev/null 2>&1; then
-        # CentOS/RHEL firewalld
         firewall-cmd --permanent --add-service=ssh
         firewall-cmd --reload
         print_success "Firewalld настроен"
@@ -525,137 +903,21 @@ setup_firewall() {
     fi
 }
 
-# Создание скрипта обновления
-create_update_script() {
-    print_status "Создание скрипта обновления..."
-    
-    cat > "$WORKER_DIR/update.sh" << 'EOF'
-#!/bin/bash
-# Скрипт обновления воркера
-
-WORKER_DIR="/opt/nuclei-worker"
-WORKER_USER="nuclei"
-
-echo "🔄 Обновление Nuclei Worker..."
-
-# Остановка сервиса
-echo "Остановка сервиса..."
-supervisorctl stop nuclei-worker 2>/dev/null || systemctl stop nuclei-worker
-
-# Обновление шаблонов
-echo "Обновление шаблонов Nuclei..."
-sudo -u "$WORKER_USER" nuclei -update-templates -silent
-
-# Обновление зависимостей Python
-echo "Обновление Python зависимостей..."
-sudo -u "$WORKER_USER" "$WORKER_DIR/venv/bin/pip" install --upgrade -r "$WORKER_DIR/requirements.txt"
-
-# Обновление репозитория шаблонов
-if [ -d "/opt/nuclei-templates/.git" ]; then
-    echo "Обновление репозитория шаблонов..."
-    cd /opt/nuclei-templates
-    sudo -u "$WORKER_USER" git pull
-fi
-
-# Запуск сервиса
-echo "Запуск сервиса..."
-supervisorctl start nuclei-worker 2>/dev/null || systemctl start nuclei-worker
-
-echo "✅ Обновление завершено"
-EOF
-
-    chmod +x "$WORKER_DIR/update.sh"
-    chown "$WORKER_USER:$WORKER_USER" "$WORKER_DIR/update.sh"
-    
-    print_success "Скрипт обновления создан"
-}
-
-# Создание скрипта диагностики
-create_diagnostic_script() {
-    print_status "Создание скрипта диагностики..."
-    
-    cat > "$WORKER_DIR/diagnostics.sh" << 'EOF'
-#!/bin/bash
-# Скрипт диагностики воркера
-
-WORKER_DIR="/opt/nuclei-worker"
-
-echo "🔍 Диагностика Nuclei Worker"
-echo "============================"
-
-# Проверка версии Nuclei
-echo "Nuclei версия:"
-nuclei -version 2>/dev/null || echo "❌ Nuclei недоступен"
-
-# Проверка Python
-echo -e "\nPython версия:"
-"$WORKER_DIR/venv/bin/python" --version 2>/dev/null || echo "❌ Python недоступен"
-
-# Проверка дискового пространства
-echo -e "\nДисковое пространство:"
-df -h "$WORKER_DIR" | tail -1
-
-# Проверка памяти
-echo -e "\nИспользование памяти:"
-free -h
-
-# Проверка процессов
-echo -e "\nПроцессы воркера:"
-ps aux | grep -E "(nuclei|worker)" | grep -v grep
-
-# Проверка логов
-echo -e "\nПоследние записи в логах:"
-if [ -f "$WORKER_DIR/logs/worker.log" ]; then
-    tail -5 "$WORKER_DIR/logs/worker.log"
-else
-    echo "Логи не найдены"
-fi
-
-# Проверка связи с админ сервером
-echo -e "\nПроверка связи с центральным сервером:"
-if [ -f "$WORKER_DIR/.env" ]; then
-    ADMIN_URL=$(grep ADMIN_SERVER_URL "$WORKER_DIR/.env" | cut -d'=' -f2)
-    if curl -s --connect-timeout 5 "$ADMIN_URL" >/dev/null; then
-        echo "✅ Связь с $ADMIN_URL установлена"
-    else
-        echo "❌ Нет связи с $ADMIN_URL"
-    fi
-else
-    echo "❌ Конфигурация не найдена"
-fi
-
-# Проверка шаблонов
-echo -e "\nШаблоны Nuclei:"
-TEMPLATE_COUNT=$(find /opt/nuclei-templates -name "*.yaml" -o -name "*.yml" 2>/dev/null | wc -l)
-echo "Найдено шаблонов: $TEMPLATE_COUNT"
-
-echo -e "\n✅ Диагностика завершена"
-EOF
-
-    chmod +x "$WORKER_DIR/diagnostics.sh"
-    chown "$WORKER_USER:$WORKER_USER" "$WORKER_DIR/diagnostics.sh"
-    
-    print_success "Скрипт диагностики создан"
-}
-
 # Первоначальная проверка системы
 initial_check() {
     print_status "Проверка системных требований..."
     
-    # Проверка доступности интернета
     if ! curl -s --connect-timeout 5 google.com >/dev/null; then
         print_warning "Нет подключения к интернету"
     fi
     
-    # Проверка свободного места
     DISK_SPACE=$(df / | tail -1 | awk '{print $4}')
-    if [ "$DISK_SPACE" -lt 1000000 ]; then  # Менее 1GB
+    if [ "$DISK_SPACE" -lt 1000000 ]; then
         print_warning "Мало свободного места на диске"
     fi
     
-    # Проверка RAM
     TOTAL_RAM=$(free | grep Mem | awk '{print $2}')
-    if [ "$TOTAL_RAM" -lt 1000000 ]; then  # Менее 1GB
+    if [ "$TOTAL_RAM" -lt 1000000 ]; then
         print_warning "Мало оперативной памяти"
     fi
     
@@ -670,11 +932,8 @@ check_services() {
     echo "Supervisor: $(systemctl is-active supervisor)"
     echo "Cron: $(systemctl is-active cron || systemctl is-active crond)"
     
-    # Проверка воркера
     if supervisorctl status nuclei-worker >/dev/null 2>&1; then
         echo "Nuclei Worker: $(supervisorctl status nuclei-worker | awk '{print $2}')"
-    elif systemctl is-active nuclei-worker >/dev/null 2>&1; then
-        echo "Nuclei Worker: $(systemctl is-active nuclei-worker)"
     else
         echo "Nuclei Worker: не настроен"
     fi
@@ -686,12 +945,10 @@ check_services() {
 test_worker() {
     print_status "Тестирование воркера..."
     
-    # Запуск диагностики
     if [ -f "$WORKER_DIR/worker.py" ]; then
         sudo -u "$WORKER_USER" "$WORKER_DIR/venv/bin/python" "$WORKER_DIR/worker.py" --diagnostics || true
     fi
     
-    # Проверка подключения к серверу
     if curl -s --connect-timeout 10 "$ADMIN_SERVER_URL" >/dev/null; then
         print_success "Связь с админ сервером установлена"
     else
@@ -722,7 +979,6 @@ print_final_info() {
     echo "📊 Мониторинг:"
     echo "   • Логи: tail -f $WORKER_DIR/logs/supervisor.log"
     echo "   • Диагностика: $WORKER_DIR/diagnostics.sh"
-    echo "   • Мониторинг: $WORKER_DIR/monitor.sh"
     echo ""
     echo "🔄 Обслуживание:"
     echo "   • Обновление: $WORKER_DIR/update.sh"
@@ -738,12 +994,20 @@ print_final_info() {
     echo "   3. Запустите тестовое сканирование"
     echo ""
     
-    # Показать информацию о системе
     echo "💻 Информация о системе:"
     echo "   • Hostname: $(hostname)"
     echo "   • IP адрес: $(hostname -I | awk '{print $1}')"
     echo "   • Архитектура: $ARCH"
-    echo "   • ОС: $(lsb_release -d 2>/dev/null | cut -f2 || cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)"
+    echo "   • ОС: $(lsb_release -d 2>/dev/null | cut -f2 || cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2 || echo 'Unknown')"
+    echo ""
+    
+    # Показываем публичный ключ центрального сервера для копирования
+    echo "🔑 Для подключения к воркеру добавьте этот ключ в authorized_keys:"
+    echo "   Скопируйте публичный ключ с центрального сервера:"
+    echo "   sudo cat /home/nuclei/.ssh/id_rsa.pub"
+    echo ""
+    echo "   И добавьте его на воркере:"
+    echo "   echo 'ПУБЛИЧНЫЙ_КЛЮЧ' >> /home/$WORKER_USER/.ssh/authorized_keys"
     echo ""
 }
 
@@ -753,7 +1017,6 @@ main() {
     
     initial_check
     
-    # Установка пакетов в зависимости от ОС
     if [ "$OS" = "debian" ]; then
         install_packages_debian
     elif [ "$OS" = "redhat" ]; then
@@ -772,13 +1035,11 @@ main() {
     setup_config
     setup_ssh
     setup_supervisor
-    create_systemd_service
+    create_diagnostic_script
+    create_update_script
     setup_cron
     setup_logrotate
-    setup_monitoring
     setup_firewall
-    create_update_script
-    create_diagnostic_script
     check_services
     test_worker
     print_final_info
