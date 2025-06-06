@@ -266,115 +266,16 @@ deploy_app_files() {
     fi
     
     # Создаем базовые статические файлы если их нет
-    if [ ! -f "$APP_DIR/static/css/style.css" ]; then
-        cat > "$APP_DIR/static/css/style.css" << 'EOF'
-/* Основные стили */
-body {
-    font-family: Arial, sans-serif;
-    margin: 0;
-    padding: 0;
-    background-color: #f5f5f5;
-}
-
-.container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 20px;
-}
-
-/* Навигация */
-.navbar {
-    background-color: #333;
-    padding: 1rem;
-    color: white;
-}
-
-/* Карточки */
-.card {
-    background: white;
-    border-radius: 4px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    padding: 20px;
-    margin-bottom: 20px;
-}
-
-/* Таблицы */
-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 20px 0;
-}
-
-th, td {
-    padding: 12px;
-    text-align: left;
-    border-bottom: 1px solid #ddd;
-}
-
-/* Формы */
-.form-group {
-    margin-bottom: 1rem;
-}
-
-input[type="text"],
-input[type="password"],
-input[type="email"] {
-    width: 100%;
-    padding: 8px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-}
-
-/* Кнопки */
-.btn {
-    padding: 8px 16px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-}
-
-.btn-primary {
-    background-color: #007bff;
-    color: white;
-}
-
-.btn-danger {
-    background-color: #dc3545;
-    color: white;
-}
-EOF
+    if [ ! -d "$APP_DIR/static" ]; then
+        mkdir -p "$APP_DIR/static/css" "$APP_DIR/static/js"
     fi
     
-    if [ ! -f "$APP_DIR/static/js/main.js" ]; then
-        cat > "$APP_DIR/static/js/main.js" << 'EOF'
-// Основной JavaScript файл
-document.addEventListener('DOMContentLoaded', function() {
-    // Инициализация компонентов
-    initializeComponents();
-});
-
-function initializeComponents() {
-    // Здесь будет инициализация компонентов
-    console.log('Application initialized');
-}
-
-// Функция для обновления статуса серверов
-function updateServerStatus() {
-    fetch('/api/servers/status')
-        .then(response => response.json())
-        .then(data => {
-            // Обновление UI
-            updateServerStatusUI(data);
-        })
-        .catch(error => console.error('Error:', error));
-}
-
-// Функция для обновления UI статуса серверов
-function updateServerStatusUI(data) {
-    // Здесь будет обновление UI
-    console.log('Server status updated:', data);
-}
-EOF
+    # Копируем статические файлы из исходной директории
+    if [ -d "static" ]; then
+        cp -r static/* "$APP_DIR/static/"
+    else
+        print_error "Директория static не найдена"
+        exit 1
     fi
     
     chown -R "$APP_USER:$APP_USER" "$APP_DIR/static"
@@ -451,6 +352,9 @@ setup_nginx() {
     
     # Создание конфигурации Nginx
     cat > /etc/nginx/sites-available/nuclei-admin << 'EOF'
+# Определение зоны ограничения запросов
+limit_req_zone $binary_remote_addr zone=one:10m rate=1r/s;
+
 server {
     listen 80;
     server_name _;
@@ -471,6 +375,9 @@ server {
         add_header X-Content-Type-Options "nosniff";
         add_header Referrer-Policy "strict-origin-when-cross-origin";
         add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';";
+        
+        # Ограничение скорости
+        limit_req zone=one burst=10 nodelay;
     }
     
     location /static {
@@ -486,10 +393,6 @@ server {
     # Логи
     access_log /var/log/nginx/nuclei-admin.access.log;
     error_log /var/log/nginx/nuclei-admin.error.log;
-    
-    # Ограничение скорости
-    limit_req_zone $binary_remote_addr zone=one:10m rate=1r/s;
-    limit_req zone=one burst=10 nodelay;
 }
 EOF
 
@@ -582,6 +485,7 @@ setup_firewall() {
         ufw allow ssh
         ufw allow 80/tcp
         ufw allow 443/tcp
+        ufw allow 5000/tcp
         ufw --force enable
         print_success "UFW firewall настроен"
     elif command -v firewall-cmd >/dev/null 2>&1; then
