@@ -22,36 +22,41 @@ import signal
 from dotenv import load_dotenv
 load_dotenv()
 
-app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'nuclei-scanner-secret-key-2025')
-
-# Конфигурация базы данных с исправленными портами
-DATABASE_URLS = {
-    'belarus': os.environ.get('DB_BELARUS', 'postgresql://nuclei_user:your_secure_password@localhost:5432/nuclei_belarus'),
-    'russia': os.environ.get('DB_RUSSIA', 'postgresql://nuclei_user:your_secure_password@localhost:5432/nuclei_russia'),
-    'kazakhstan': os.environ.get('DB_KAZAKHSTAN', 'postgresql://nuclei_user:your_secure_password@localhost:5432/nuclei_kazakhstan')
-}
-
-# Текущая активная база (можно переключать через админку)
-current_db = os.environ.get('CURRENT_DB', 'belarus')
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URLS[current_db]
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_pre_ping': True,
-    'pool_recycle': 300,
-    'connect_args': {
-        'connect_timeout': 10,
-        'application_name': 'nuclei_scanner'
-    }
-}
-
 # Инициализация базы данных
 db = SQLAlchemy()
 
 def create_app():
     """Фабрика приложений Flask"""
+    app = Flask(__name__)
+    app.secret_key = os.environ.get('SECRET_KEY', 'nuclei-scanner-secret-key-2025')
+
+    # Конфигурация базы данных с исправленными портами
+    DATABASE_URLS = {
+        'belarus': os.environ.get('DB_BELARUS', 'postgresql://nuclei_user:your_secure_password@localhost:5432/nuclei_scanner_belarus'),
+        'russia': os.environ.get('DB_RUSSIA', 'postgresql://nuclei_user:your_secure_password@localhost:5432/nuclei_scanner_russia'),
+        'kazakhstan': os.environ.get('DB_KAZAKHSTAN', 'postgresql://nuclei_user:your_secure_password@localhost:5432/nuclei_scanner_kazakhstan')
+    }
+
+    # Текущая активная база (можно переключать через админку)
+    current_db = os.environ.get('CURRENT_DB', 'belarus')
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URLS[current_db]
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,
+        'pool_recycle': 300,
+        'connect_args': {
+            'connect_timeout': 10,
+            'application_name': 'nuclei_scanner'
+        }
+    }
+    
+    # Инициализируем базу данных с приложением
     db.init_app(app)
+    
     return app
+
+# Создаём приложение
+app = create_app()
 
 # Telegram настройки
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
@@ -212,6 +217,11 @@ def update_server_status():
         
         time.sleep(30)  # Проверяем каждые 30 секунд
 
+def signal_handler(signum, frame):
+    """Обработчик сигналов"""
+    print(f"[INFO] Получен сигнал {signum}, завершение работы...")
+    sys.exit(0)
+
 # Аутентификация
 @app.before_request
 def require_login():
@@ -290,8 +300,12 @@ def dashboard():
 @app.route('/servers')
 def servers():
     """Управление серверами"""
-    servers_list = Server.query.all()
-    return render_template('servers.html', servers=servers_list)
+    try:
+        servers_list = Server.query.all()
+        return render_template('servers.html', servers=servers_list)
+    except Exception as e:
+        flash(f'Ошибка загрузки серверов: {str(e)}')
+        return render_template('servers.html', servers=[])
 
 @app.route('/servers/add', methods=['POST'])
 def add_server():
@@ -333,14 +347,21 @@ def delete_server(server_id):
 @app.route('/tasks')
 def tasks():
     """Управление задачами сканирования"""
-    tasks_list = ScanTask.query.order_by(ScanTask.created_at.desc()).all()
-    servers_list = Server.query.filter_by(status='online').all()
-    templates_list = ScanTemplate.query.all()
-    
-    return render_template('tasks.html', 
-                         tasks=tasks_list,
-                         servers=servers_list,
-                         templates=templates_list)
+    try:
+        tasks_list = ScanTask.query.order_by(ScanTask.created_at.desc()).all()
+        servers_list = Server.query.filter_by(status='online').all()
+        templates_list = ScanTemplate.query.all()
+        
+        return render_template('tasks.html', 
+                             tasks=tasks_list,
+                             servers=servers_list,
+                             templates=templates_list)
+    except Exception as e:
+        flash(f'Ошибка загрузки задач: {str(e)}')
+        return render_template('tasks.html', 
+                             tasks=[],
+                             servers=[],
+                             templates=[])
 
 @app.route('/tasks/create', methods=['POST'])
 def create_task():
@@ -433,18 +454,27 @@ def start_task(task_id):
 @app.route('/vulnerabilities')
 def vulnerabilities():
     """Просмотр найденных уязвимостей"""
-    page = request.args.get('page', 1, type=int)
-    severity = request.args.get('severity', '')
-    
-    query = Vulnerability.query
-    if severity:
-        query = query.filter_by(severity_level=severity)
-    
-    vulns = query.order_by(Vulnerability.discovered_at.desc()).paginate(
-        page=page, per_page=50, error_out=False
-    )
-    
-    return render_template('vulnerabilities.html', vulnerabilities=vulns)
+    try:
+        page = request.args.get('page', 1, type=int)
+        severity = request.args.get('severity', '')
+        
+        query = Vulnerability.query
+        if severity:
+            query = query.filter_by(severity_level=severity)
+        
+        vulns = query.order_by(Vulnerability.discovered_at.desc()).paginate(
+            page=page, per_page=50, error_out=False
+        )
+        
+        return render_template('vulnerabilities.html', vulnerabilities=vulns)
+    except Exception as e:
+        flash(f'Ошибка загрузки уязвимостей: {str(e)}')
+        # Создаём пустой объект пагинации для отображения
+        class EmptyPagination:
+            items = []
+            pages = 0
+            
+        return render_template('vulnerabilities.html', vulnerabilities=EmptyPagination())
 
 # API для воркеров
 @app.route('/api/worker/heartbeat', methods=['POST'])
@@ -574,9 +604,6 @@ if __name__ == '__main__':
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
-    # Создаём приложение
-    app = create_app()
     
     try:
         with app.app_context():
