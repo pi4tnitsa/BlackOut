@@ -28,13 +28,18 @@ class DatabaseManager:
                 logger.info(f"Подключение к базе {database_name} установлено")
             except Exception as e:
                 logger.error(f"Ошибка подключения к базе {database_name}: {e}")
-                raise
+                # Не прерываем работу, возвращаем None
+                return None
         
         return self.connections[database_name]
     
     def execute_query(self, database_name, query, params=None):
-        """Выполнение SQL запроса"""
+        """Выполнение SQL запроса с обработкой ошибок"""
         conn = self.get_connection(database_name)
+        if not conn:
+            logger.error(f"Нет подключения к базе {database_name}")
+            return []
+        
         try:
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
@@ -45,7 +50,7 @@ class DatabaseManager:
         except Exception as e:
             conn.rollback()
             logger.error(f"Ошибка выполнения запроса: {e}")
-            raise
+            return []
     
     def close_all_connections(self):
         """Закрытие всех подключений"""
@@ -59,7 +64,7 @@ class DatabaseManager:
 db_manager = DatabaseManager()
 
 def init_db(app):
-    """Инициализация базы данных"""
+    """Инициализация базы данных с обработкой ошибок"""
     with app.app_context():
         # Создание таблиц в каждой базе данных
         create_tables_query = """
