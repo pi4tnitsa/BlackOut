@@ -17,6 +17,39 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Получаем абсолютный путь к директории скрипта
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+
+# Переходим в директорию скрипта
+cd "$SCRIPT_DIR"
+
+# Проверяем наличие необходимых файлов
+echo "Проверка файлов..."
+for file in app.py templates static; do
+    if [ -e "$file" ]; then
+        echo "✓ $file найден"
+    else
+        echo "✗ $file не найден"
+        exit 1
+    fi
+done
+
+# Проверяем права на файлы
+echo "Проверка прав доступа..."
+for file in app.py deploy-admin.sh; do
+    if [ -r "$file" ]; then
+        echo "✓ $file доступен для чтения"
+    else
+        echo "✗ Нет прав на чтение $file"
+        chmod +r "$file"
+        echo "  Права на чтение добавлены"
+    fi
+done
+
+# Запускаем deploy-admin.sh с правильным путем
+echo "Запуск deploy-admin.sh..."
+sudo bash "$SCRIPT_DIR/deploy-admin.sh"
+
 # Проверка прав root
 if [ "$EUID" -ne 0 ]; then
     print_error "Запустите скрипт с правами root: sudo ./quick-fix.sh"
