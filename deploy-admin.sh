@@ -78,7 +78,8 @@ install_packages_debian() {
         unzip \
         build-essential \
         libpq-dev \
-        redis-server
+        redis-server \
+        golang-go
 }
 
 # Функция установки пакетов для RedHat/CentOS
@@ -106,7 +107,8 @@ install_packages_redhat() {
         gcc-c++ \
         make \
         postgresql-devel \
-        redis
+        redis \
+        golang
 }
 
 # Создание пользователя приложения
@@ -166,6 +168,9 @@ setup_app_directory() {
     mkdir -p "$APP_DIR"
     mkdir -p "$APP_DIR/templates"
     mkdir -p "$APP_DIR/static"
+    mkdir -p "$APP_DIR/static/css"
+    mkdir -p "$APP_DIR/static/js"
+    mkdir -p "$APP_DIR/static/img"
     mkdir -p "$APP_DIR/logs"
     
     chown -R "$APP_USER:$APP_USER" "$APP_DIR"
@@ -173,52 +178,27 @@ setup_app_directory() {
     print_success "Директория приложения создана: $APP_DIR"
 }
 
-# Функция для проверки и создания директорий, переноса файлов
-setup_project_structure() {
-    print_status "Проверка и создание структуры проекта..."
+# Установка Nuclei
+install_nuclei() {
+    print_status "Установка Nuclei..."
     
-    # Создание основных директорий
-    mkdir -p "$APP_DIR/templates"
-    mkdir -p "$APP_DIR/static"
-    mkdir -p "$APP_DIR/logs"
-    mkdir -p "$APP_DIR/static/css"
-    mkdir -p "$APP_DIR/static/js"
-    mkdir -p "$APP_DIR/static/img"
-    
-    # Перенос файлов из корня проекта
-    if [ -f "app.py" ]; then
-        cp app.py "$APP_DIR/"
-        chown "$APP_USER:$APP_USER" "$APP_DIR/app.py"
-        print_success "Файл app.py перенесен в $APP_DIR"
+    # Установка Go если не установлен
+    if ! command -v go &> /dev/null; then
+        print_status "Установка Go..."
+        wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
+        tar -C /usr/local -xzf go1.21.0.linux-amd64.tar.gz
+        rm go1.21.0.linux-amd64.tar.gz
+        echo 'export PATH=$PATH:/usr/local/go/bin' > /etc/profile.d/go.sh
+        source /etc/profile.d/go.sh
     fi
     
-    if [ -d "templates" ]; then
-        cp -r templates/* "$APP_DIR/templates/"
-        chown -R "$APP_USER:$APP_USER" "$APP_DIR/templates/"
-        print_success "Шаблоны перенесены в $APP_DIR/templates"
-    fi
+    # Установка Nuclei
+    go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest
     
-    if [ -d "static" ]; then
-        cp -r static/* "$APP_DIR/static/"
-        chown -R "$APP_USER:$APP_USER" "$APP_DIR/static/"
-        print_success "Статические файлы перенесены в $APP_DIR/static"
-    fi
+    # Создание символической ссылки
+    ln -sf /root/go/bin/nuclei /usr/local/bin/nuclei
     
-    # Проверка и создание необходимых файлов
-    if [ ! -f "$APP_DIR/templates/base.html" ]; then
-        print_warning "Файл base.html не найден в templates"
-    fi
-    
-    if [ ! -f "$APP_DIR/templates/index.html" ]; then
-        print_warning "Файл index.html не найден в templates"
-    fi
-    
-    # Создание пустых файлов, если они отсутствуют
-    touch "$APP_DIR/logs/gunicorn.log"
-    touch "$APP_DIR/logs/celery.log"
-    chown -R "$APP_USER:$APP_USER" "$APP_DIR/logs"
-    
-    print_success "Структура проекта настроена"
+    print_success "Nuclei установлен"
 }
 
 # Установка Python-зависимостей
@@ -230,24 +210,30 @@ install_python_deps() {
     
     # Создание requirements.txt
     cat > "$APP_DIR/requirements.txt" << 'EOF'
-Flask==3.0.0
-Flask-SQLAlchemy==3.1.1
-Werkzeug==3.0.1
-paramiko==3.4.0
+Flask==2.3.3
+Flask-SQLAlchemy==3.0.5
+Werkzeug==2.3.7
+psycopg2-binary==2.9.7
+SQLAlchemy==2.0.20
+paramiko==3.3.1
 requests==2.31.0
-psycopg2-binary==2.9.9
-gunicorn==21.2.0
-redis==5.0.1
-python-dotenv==1.0.0
-celery==5.3.6
 ipaddress==1.0.23
-gevent==23.9.1
-SQLAlchemy==2.0.23
-alembic==1.12.1
-Flask-Login==0.6.3
-Flask-WTF==1.2.1
-WTForms==3.1.1
-python-telegram-bot==20.6
+netaddr==0.8.0
+gunicorn==21.2.0
+gevent==23.7.0
+celery==5.3.1
+redis==4.6.0
+python-dotenv==1.0.0
+schedule==1.2.0
+psutil==5.9.5
+click==8.1.7
+colorama==0.4.6
+structlog==23.1.0
+marshmallow==3.20.1
+orjson==3.9.5
+cryptography==41.0.4
+python-dateutil==2.8.2
+pytz==2023.3
 EOF
 
     # Установка зависимостей
@@ -261,12 +247,13 @@ EOF
 deploy_app_files() {
     print_status "Развёртывание файлов приложения..."
     
-    # Копируем основной файл приложения (предполагается, что он находится в текущей директории)
+    # Копируем основной файл приложения
     if [ -f "app.py" ]; then
         cp app.py "$APP_DIR/"
         chown "$APP_USER:$APP_USER" "$APP_DIR/app.py"
     else
-        print_warning "Файл app.py не найден в текущей директории"
+        print_error "Файл app.py не найден в текущей директории"
+        exit 1
     fi
     
     # Копируем шаблоны
@@ -274,8 +261,123 @@ deploy_app_files() {
         cp -r templates/* "$APP_DIR/templates/"
         chown -R "$APP_USER:$APP_USER" "$APP_DIR/templates/"
     else
-        print_warning "Директория templates не найдена"
+        print_error "Директория templates не найдена"
+        exit 1
     fi
+    
+    # Создаем базовые статические файлы если их нет
+    if [ ! -f "$APP_DIR/static/css/style.css" ]; then
+        cat > "$APP_DIR/static/css/style.css" << 'EOF'
+/* Основные стили */
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f5f5f5;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* Навигация */
+.navbar {
+    background-color: #333;
+    padding: 1rem;
+    color: white;
+}
+
+/* Карточки */
+.card {
+    background: white;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+/* Таблицы */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+}
+
+th, td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}
+
+/* Формы */
+.form-group {
+    margin-bottom: 1rem;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="email"] {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+/* Кнопки */
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.btn-primary {
+    background-color: #007bff;
+    color: white;
+}
+
+.btn-danger {
+    background-color: #dc3545;
+    color: white;
+}
+EOF
+    fi
+    
+    if [ ! -f "$APP_DIR/static/js/main.js" ]; then
+        cat > "$APP_DIR/static/js/main.js" << 'EOF'
+// Основной JavaScript файл
+document.addEventListener('DOMContentLoaded', function() {
+    // Инициализация компонентов
+    initializeComponents();
+});
+
+function initializeComponents() {
+    // Здесь будет инициализация компонентов
+    console.log('Application initialized');
+}
+
+// Функция для обновления статуса серверов
+function updateServerStatus() {
+    fetch('/api/servers/status')
+        .then(response => response.json())
+        .then(data => {
+            // Обновление UI
+            updateServerStatusUI(data);
+        })
+        .catch(error => console.error('Error:', error));
+}
+
+// Функция для обновления UI статуса серверов
+function updateServerStatusUI(data) {
+    // Здесь будет обновление UI
+    console.log('Server status updated:', data);
+}
+EOF
+    fi
+    
+    chown -R "$APP_USER:$APP_USER" "$APP_DIR/static"
     
     print_success "Файлы приложения развёрнуты"
 }
@@ -353,9 +455,6 @@ server {
     listen 80;
     server_name _;
     
-    # Редирект на HTTPS (раскомментируйте при настройке SSL)
-    # return 301 https://$server_name$request_uri;
-    
     location / {
         proxy_pass http://127.0.0.1:5000;
         proxy_set_header Host $host;
@@ -392,26 +491,6 @@ server {
     limit_req_zone $binary_remote_addr zone=one:10m rate=1r/s;
     limit_req zone=one burst=10 nodelay;
 }
-
-# Конфигурация для HTTPS (раскомментируйте при настройке SSL)
-# server {
-#     listen 443 ssl http2;
-#     server_name _;
-#     
-#     ssl_certificate /path/to/certificate.crt;
-#     ssl_certificate_key /path/to/private.key;
-#     ssl_protocols TLSv1.2 TLSv1.3;
-#     ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512;
-#     ssl_prefer_server_ciphers off;
-#     
-#     location / {
-#         proxy_pass http://127.0.0.1:5000;
-#         proxy_set_header Host $host;
-#         proxy_set_header X-Real-IP $remote_addr;
-#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-#         proxy_set_header X-Forwarded-Proto $scheme;
-#     }
-# }
 EOF
 
     # Активация сайта
@@ -533,38 +612,6 @@ print('База данных инициализирована')
     print_success "База данных инициализирована"
 }
 
-# Создание systemd сервиса (альтернатива Supervisor)
-create_systemd_service() {
-    print_status "Создание systemd сервиса..."
-    
-    cat > /etc/systemd/system/nuclei-admin.service << EOF
-[Unit]
-Description=Nuclei Scanner Admin Panel
-After=network.target postgresql.service redis-server.service
-Wants=postgresql.service redis-server.service
-
-[Service]
-Type=simple
-User=$APP_USER
-WorkingDirectory=$APP_DIR
-Environment=PATH=$APP_DIR/venv/bin
-Environment=PYTHONUNBUFFERED=1
-ExecStart=$APP_DIR/venv/bin/gunicorn --bind 127.0.0.1:5000 --workers 4 --worker-class gevent --timeout 120 --keep-alive 5 --max-requests 1000 --max-requests-jitter 50 app:app
-Restart=always
-RestartSec=5
-StartLimitInterval=0
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable nuclei-admin
-    
-    print_success "Systemd сервис создан"
-}
-
 # Проверка состояния сервисов
 check_services() {
     print_status "Проверка состояния сервисов..."
@@ -628,7 +675,7 @@ main() {
     create_app_user
     setup_postgresql
     setup_app_directory
-    setup_project_structure
+    install_nuclei
     install_python_deps
     deploy_app_files
     setup_config
