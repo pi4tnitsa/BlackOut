@@ -52,14 +52,20 @@ class Server:
 class User(UserMixin):
     """Модель пользователя для авторизации"""
     def __init__(self, username):
-        self.id = 1  # Единственный администратор
+        self.id = "1"  # Строка для Flask-Login
         self.username = username
+        self.is_active_user = True
+        self.is_anonymous_user = False
+        self.is_authenticated_user = True
     
     def is_authenticated(self):
-        return True
+        return self.is_authenticated_user
     
     def is_active(self):
-        return True
+        return self.is_active_user
+    
+    def is_anonymous(self):
+        return self.is_anonymous_user
     
     def get_id(self):
         """Метод get_id() обязателен для Flask-Login"""
@@ -68,6 +74,7 @@ class User(UserMixin):
     @staticmethod
     def get(user_id):
         """Статический метод для получения пользователя по ID"""
+        # Простая проверка - в реальном приложении здесь была бы проверка БД
         if str(user_id) == "1":
             from config.settings import Config
             return User(Config.ADMIN_USERNAME)
