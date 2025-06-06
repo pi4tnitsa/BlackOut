@@ -246,8 +246,8 @@ function viewVulnDetails(vulnId) {
                     </button>
                 </li>
                 <li class="nav-item" role="presentation">
-                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#metadata-tab">
-                        Metadata
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#vuln-metadata-tab">
+                        Vulnerability Metadata
                     </button>
                 </li>
             </ul>
@@ -276,18 +276,8 @@ X-Powered-By: PHP/7.4.3
 &lt;/body&gt;
 &lt;/html&gt;</pre>
                 </div>
-                <div class="tab-pane fade" id="metadata-tab">
-                    <pre class="bg-light p-3 rounded" style="max-height: 300px; overflow-y: auto;">{
-  "template_info": {
-    "name": "Admin Panel Detection",
-    "author": "security-team",
-    "severity": "critical",
-    "description": "Detects exposed admin panels",
-    "reference": ["https://example.com/cve-2023-1234"]
-  },
-  "curl_command": "curl -X GET 'https://192.168.1.15:8080/admin'",
-  "timestamp": "${new Date().toISOString()}"
-}</pre>
+                <div class="tab-pane fade" id="vuln-metadata-tab">
+                    <pre class="mt-3"><code>{{ vulnerability.vuln_metadata | tojson(indent=2) }}</code></pre>
                 </div>
             </div>
         </div>

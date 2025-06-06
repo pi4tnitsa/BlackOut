@@ -230,17 +230,24 @@ install_python_deps() {
     
     # Создание requirements.txt
     cat > "$APP_DIR/requirements.txt" << 'EOF'
-Flask==2.3.3
-Flask-SQLAlchemy==3.0.5
-Werkzeug==2.3.7
-paramiko==3.3.1
+Flask==3.0.0
+Flask-SQLAlchemy==3.1.1
+Werkzeug==3.0.1
+paramiko==3.4.0
 requests==2.31.0
-psycopg2-binary==2.9.7
+psycopg2-binary==2.9.9
 gunicorn==21.2.0
-redis==4.6.0
+redis==5.0.1
 python-dotenv==1.0.0
-celery==5.3.1
+celery==5.3.6
 ipaddress==1.0.23
+gevent==23.9.1
+SQLAlchemy==2.0.23
+alembic==1.12.1
+Flask-Login==0.6.3
+Flask-WTF==1.2.1
+WTForms==3.1.1
+python-telegram-bot==20.6
 EOF
 
     # Установка зависимостей
@@ -358,12 +365,20 @@ server {
         proxy_connect_timeout 30;
         proxy_send_timeout 30;
         proxy_read_timeout 30;
+        
+        # Добавляем заголовки безопасности
+        add_header X-Frame-Options "SAMEORIGIN";
+        add_header X-XSS-Protection "1; mode=block";
+        add_header X-Content-Type-Options "nosniff";
+        add_header Referrer-Policy "strict-origin-when-cross-origin";
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';";
     }
     
     location /static {
         alias /opt/nuclei-admin/static;
         expires 1y;
         add_header Cache-Control "public, immutable";
+        add_header X-Content-Type-Options "nosniff";
     }
     
     # Ограничение размера загружаемых файлов
@@ -372,6 +387,10 @@ server {
     # Логи
     access_log /var/log/nginx/nuclei-admin.access.log;
     error_log /var/log/nginx/nuclei-admin.error.log;
+    
+    # Ограничение скорости
+    limit_req_zone $binary_remote_addr zone=one:10m rate=1r/s;
+    limit_req zone=one burst=10 nodelay;
 }
 
 # Конфигурация для HTTPS (раскомментируйте при настройке SSL)
@@ -418,7 +437,7 @@ setup_supervisor() {
     # Создание конфигурации Supervisor
     cat > /etc/supervisor/conf.d/nuclei-admin.conf << EOF
 [program:nuclei-admin]
-command=$APP_DIR/venv/bin/gunicorn --bind 127.0.0.1:5000 --workers 4 --worker-class gevent app:app
+command=$APP_DIR/venv/bin/gunicorn --bind 127.0.0.1:5000 --workers 4 --worker-class gevent --timeout 120 --keep-alive 5 --max-requests 1000 --max-requests-jitter 50 app:app
 directory=$APP_DIR
 user=$APP_USER
 autostart=true
@@ -427,10 +446,10 @@ redirect_stderr=true
 stdout_logfile=$APP_DIR/logs/gunicorn.log
 stdout_logfile_maxbytes=50MB
 stdout_logfile_backups=5
-environment=PATH="$APP_DIR/venv/bin"
+environment=PATH="$APP_DIR/venv/bin",PYTHONUNBUFFERED=1
 
 [program:nuclei-admin-celery]
-command=$APP_DIR/venv/bin/celery -A app.celery worker --loglevel=info
+command=$APP_DIR/venv/bin/celery -A app.celery worker --loglevel=info --concurrency=4 --max-tasks-per-child=1000
 directory=$APP_DIR
 user=$APP_USER
 autostart=true
@@ -439,7 +458,7 @@ redirect_stderr=true
 stdout_logfile=$APP_DIR/logs/celery.log
 stdout_logfile_maxbytes=50MB
 stdout_logfile_backups=5
-environment=PATH="$APP_DIR/venv/bin"
+environment=PATH="$APP_DIR/venv/bin",PYTHONUNBUFFERED=1
 EOF
 
     # Перезапуск Supervisor
@@ -521,16 +540,20 @@ create_systemd_service() {
     cat > /etc/systemd/system/nuclei-admin.service << EOF
 [Unit]
 Description=Nuclei Scanner Admin Panel
-After=network.target postgresql.service
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
 
 [Service]
 Type=simple
 User=$APP_USER
 WorkingDirectory=$APP_DIR
 Environment=PATH=$APP_DIR/venv/bin
-ExecStart=$APP_DIR/venv/bin/gunicorn --bind 127.0.0.1:5000 --workers 4 app:app
+Environment=PYTHONUNBUFFERED=1
+ExecStart=$APP_DIR/venv/bin/gunicorn --bind 127.0.0.1:5000 --workers 4 --worker-class gevent --timeout 120 --keep-alive 5 --max-requests 1000 --max-requests-jitter 50 app:app
 Restart=always
 RestartSec=5
+StartLimitInterval=0
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target

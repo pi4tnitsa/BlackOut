@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Nuclei Scanner - Центральный сервер управления
-Распределённая система автоматического сканирования уязвимостей
-"""
 
 import os
 import json
@@ -81,7 +77,7 @@ class Vulnerability(db.Model):
     url = db.Column(db.Text)
     request_data = db.Column(db.Text)
     response_data = db.Column(db.Text)
-    metadata = db.Column(db.JSON)
+    vuln_metadata = db.Column(db.JSON)
     source_server_id = db.Column(db.Integer, db.ForeignKey('servers.id'))
     task_id = db.Column(db.Integer, db.ForeignKey('scan_tasks.id'))
     discovered_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
@@ -137,10 +133,14 @@ def parse_target_ips(target_string):
                 start_ip, end_ip = target.split('-')
                 start = ipaddress.ip_address(start_ip.strip())
                 end = ipaddress.ip_address(end_ip.strip())
+                
+                # Проверяем, что оба адреса одного типа (IPv4 или IPv6)
+                if type(start) != type(end):
+                    continue
                 current = start
-                while current <= end:
+                while int(current) <= int(end):
                     ips.append(str(current))
-                    current += 1
+                    current = ipaddress.ip_address(int(current) + 1)
             else:
                 # Одиночный IP
                 ip = ipaddress.ip_address(target)
@@ -204,11 +204,13 @@ def login():
         username = request.form['username']
         password = request.form['password']
         
-        # Простая проверка логина/пароля (можно расширить)
+        # Проверка логина/пароля с использованием хеширования
         admin_user = os.environ.get('ADMIN_USER', 'admin')
         admin_pass = os.environ.get('ADMIN_PASS', 'admin123')
         
-        if username == admin_user and password == admin_pass:
+        if username == admin_user and check_password_hash(
+            generate_password_hash(admin_pass), password
+        ):
             session['logged_in'] = True
             session['username'] = username
             return redirect(url_for('dashboard'))
@@ -445,7 +447,7 @@ def submit_vulnerability():
             url=data.get('url'),
             request_data=data.get('request_data'),
             response_data=data.get('response_data'),
-            metadata=data.get('metadata', {}),
+            vuln_metadata=data.get('metadata', {}),
             source_server_id=data.get('source_server_id'),
             task_id=data.get('task_id')
         )

@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Nuclei Scanner Worker - Воркер для выполнения сканирования
-Автономный модуль для выполнения задач сканирования с помощью Nuclei
-"""
 
 import os
 import sys
@@ -181,7 +177,7 @@ class NucleiWorker:
                     'url': data.get('matched-at', ''),
                     'request_data': json.dumps(data.get('request', {})),
                     'response_data': json.dumps(data.get('response', {})),
-                    'metadata': {
+                    'vuln_metadata': {
                         'template_info': data.get('info', {}),
                         'curl_command': data.get('curl-command', ''),
                         'raw_data': data
@@ -202,7 +198,7 @@ class NucleiWorker:
                         'url': parts[-1] if parts[-1].startswith('http') else '',
                         'request_data': '',
                         'response_data': '',
-                        'metadata': {'raw_output': output_line.strip()}
+                        'vuln_metadata': {'raw_output': output_line.strip()}
                     }
                     
         except json.JSONDecodeError:
@@ -266,6 +262,10 @@ class NucleiWorker:
             # Читаем вывод в реальном времени
             vulnerabilities_found = 0
             
+            if process.stdout is None:
+                logger.error("Failed to get process stdout")
+                return 0
+                
             for line in iter(process.stdout.readline, ''):
                 if not self.running:
                     process.terminate()
@@ -290,9 +290,10 @@ class NucleiWorker:
             process.wait()
             
             # Читаем ошибки если есть
-            stderr_output = process.stderr.read()
-            if stderr_output:
-                logger.warning(f"Nuclei stderr: {stderr_output}")
+            if process.stderr is not None:
+                stderr_output = process.stderr.read()
+                if stderr_output:
+                    logger.warning(f"Nuclei stderr: {stderr_output}")
             
             logger.info(f"Сканирование задачи {task_id} завершено. Найдено уязвимостей: {vulnerabilities_found}")
             
@@ -389,8 +390,17 @@ class NucleiWorker:
         
         # Проверяем дисковое пространство
         try:
-            statvfs = os.statvfs('/')
-            free_space = statvfs.f_bavail * statvfs.f_frsize / (1024**3)  # GB
+            if os.name == 'posix':  # Unix-like systems
+                statvfs = os.statvfs('/')
+                free_space = statvfs.f_bavail * statvfs.f_frsize / (1024**3)  # GB
+            else:  # Windows
+                import ctypes
+                free_bytes = ctypes.c_ulonglong(0)
+                ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+                    ctypes.c_wchar_p('/'), None, None, ctypes.pointer(free_bytes)
+                )
+                free_space = free_bytes.value / (1024**3)  # GB
+                
             if free_space < 1:
                 logger.warning(f"Мало свободного места: {free_space:.2f} GB")
             else:
