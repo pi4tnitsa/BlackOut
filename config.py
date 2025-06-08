@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     # База данных
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./nuclei_controller.db")
     
+
+    # Базовый путь
+    base_dir: str = os.path.dirname(os.path.abspath(__file__))
+
     # Безопасность
     secret_key: str = os.getenv("SECRET_KEY", "your-secret-key-here")
     algorithm: str = "HS256"
@@ -27,10 +31,10 @@ class Settings(BaseSettings):
     port: int = int(os.getenv("PORT", "8000"))
     
     # Пути
-    upload_dir: str = "uploads"
+    upload_dir: str = os.path.join(base_dir, "uploads")
     templates_dir: str = os.path.join(upload_dir, "templates")
     targets_dir: str = os.path.join(upload_dir, "targets")
-    worker_scripts_dir: str = "worker_scripts"
+    worker_scripts_dir: str = os.path.join(base_dir, "worker_scripts")
     
     # Настройки воркеров
     worker_timeout: int = 300  # Таймаут SSH подключения в секундах

@@ -51,6 +51,10 @@ class TemplateManager:
     
     async def deploy_to_worker(self, template: Template, worker: Worker):
         """Развертывание шаблона на воркере"""
+        # Проверка существования файла на контроллере
+        if not os.path.exists(template.file_path):
+            raise Exception(f"Template file not found on controller: {template.file_path}")
+        
         try:
             await self.worker_manager.deploy_template(
                 worker,

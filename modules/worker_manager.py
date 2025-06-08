@@ -99,12 +99,23 @@ echo "Scan completed for task $TASK_ID"
         except:
             return False
     
+    async def ensure_remote_directory(self, ssh: paramiko.SSHClient, path: str):
+        """Создает удаленную директорию, если она не существует"""
+        stdin, stdout, stderr = ssh.exec_command(f"mkdir -p {path}")
+        # Дожидаемся завершения команды
+        stdout.channel.recv_exit_status()
+
+
     async def deploy_template(self, worker: Worker, template_path: str, template_name: str):
         """Развертывание шаблона на воркере"""
         try:
             ssh = self._connect_ssh(worker)
             sftp = ssh.open_sftp()
             
+            # Создаем директорию, если не существует
+            remote_dir = "~/nuclei-worker/templates"
+            await self.ensure_remote_directory(ssh, remote_dir)
+
             # Копирование архива
             remote_path = f"~/nuclei-worker/templates/{template_name}"
             sftp.put(template_path, remote_path)
