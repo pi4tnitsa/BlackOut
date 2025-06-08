@@ -3,155 +3,88 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Nuclei Scanner{% endblock %}</title>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <style>
-        .sidebar {
-            min-height: 100vh;
-            background: #343a40;
-        }
-        .sidebar .nav-link {
-            color: #fff;
-            padding: 15px 20px;
-            border-bottom: 1px solid #495057;
-        }
-        .sidebar .nav-link:hover, .sidebar .nav-link.active {
-            background: #495057;
-            color: #fff;
-        }
-        .main-content {
-            background: #f8f9fa;
-            min-height: 100vh;
-        }
-        .status-online {
-            color: #28a745;
-        }
-        .status-offline {
-            color: #dc3545;
-        }
-        .severity-critical {
-            color: #721c24;
-            background: #f8d7da;
-        }
-        .severity-high {
-            color: #842029;
-            background: #f1aeb5;
-        }
-        .severity-medium {
-            color: #664d03;
-            background: #fff3cd;
-        }
-        .severity-low {
-            color: #0f5132;
-            background: #d1e7dd;
-        }
-        .card-metric {
-            border-left: 4px solid #007bff;
-        }
-        .navbar-brand {
-            font-weight: bold;
-        }
-    </style>
+    <title>{% block title %}Nuclei Controller{% endblock %}</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}">
+    
+    {% block extra_css %}{% endblock %}
 </head>
 <body>
-    <div class="container-fluid">
-        <div class="row">
-            <!-- Боковая панель -->
-            <div class="col-md-2 p-0">
-                <nav class="sidebar">
-                    <div class="p-3">
-                        <h5 class="text-white">Nuclei Scanner</h5>
-                        <small class="text-muted">Система сканирования уязвимостей</small>
-                    </div>
-                    
-                    <ul class="nav flex-column">
-                        <li class="nav-item">
-                            <a class="nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">
-                                <i class="fas fa-tachometer-alt"></i> Панель управления
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link {% if request.endpoint == 'servers' %}active{% endif %}" href="{{ url_for('servers') }}">
-                                <i class="fas fa-server"></i> Серверы
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link {% if request.endpoint == 'tasks' %}active{% endif %}" href="{{ url_for('tasks') }}">
-                                <i class="fas fa-tasks"></i> Задачи сканирования
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link {% if request.endpoint == 'vulnerabilities' %}active{% endif %}" href="{{ url_for('vulnerabilities') }}">
-                                <i class="fas fa-bug"></i> Уязвимости
-                            </a>
-                        </li>
-                        <li class="nav-item mt-auto">
-                            <a class="nav-link" href="{{ url_for('logout') }}">
-                                <i class="fas fa-sign-out-alt"></i> Выход
-                            </a>
-                        </li>
-                    </ul>
-                </nav>
-            </div>
-            
-            <!-- Основной контент -->
-            <div class="col-md-10 main-content">
-                <nav class="navbar navbar-light bg-white border-bottom">
-                    <div class="container-fluid">
-                        <span class="navbar-brand mb-0 h1">
-                            {% block page_title %}Nuclei Scanner{% endblock %}
-                        </span>
-                        <div class="d-flex align-items-center">
-                            <span class="me-3">
-                                <i class="fas fa-user"></i> {{ session.username }}
-                            </span>
-                            <span class="badge bg-success">
-                                <i class="fas fa-clock"></i> {{ moment().format('HH:mm') }}
-                            </span>
-                        </div>
-                    </div>
-                </nav>
-                
-                <div class="container-fluid p-4">
-                    <!-- Уведомления -->
-                    {% with messages = get_flashed_messages() %}
-                        {% if messages %}
-                            {% for message in messages %}
-                                <div class="alert alert-info alert-dismissible fade show" role="alert">
-                                    {{ message }}
-                                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                                </div>
-                            {% endfor %}
-                        {% endif %}
-                    {% endwith %}
-                    
-                    <!-- Основной контент страницы -->
-                    {% block content %}{% endblock %}
-                </div>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/dashboard">
+                <i class="fas fa-shield-alt"></i> Nuclei Controller
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.url.path == '/dashboard' %}active{% endif %}" href="/dashboard">
+                            <i class="fas fa-dashboard"></i> Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.url.path == '/workers' %}active{% endif %}" href="/workers">
+                            <i class="fas fa-server"></i> Workers
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.url.path == '/templates' %}active{% endif %}" href="/templates">
+                            <i class="fas fa-file-code"></i> Templates
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.url.path == '/tasks' %}active{% endif %}" href="/tasks">
+                            <i class="fas fa-tasks"></i> Tasks
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.url.path == '/results' %}active{% endif %}" href="/results">
+                            <i class="fas fa-bug"></i> Results
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown">
+                            <i class="fas fa-user"></i> {{ user.username if user else 'Guest' }}
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="/logout"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                        </ul>
+                    </li>
+                </ul>
             </div>
         </div>
-    </div>
+    </nav>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/locale/ru.min.js"></script>
+    <!-- Main Content -->
+    <main class="container-fluid py-4">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer mt-auto py-3 bg-light">
+        <div class="container text-center">
+            <span class="text-muted">Nuclei Controller v1.0.0 | © 2025</span>
+        </div>
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <!-- Custom JS -->
+    <script src="{{ url_for('static', path='/js/main.js') }}"></script>
     
-    <script>
-        // Автообновление времени
-        setInterval(function() {
-            const timeElement = document.querySelector('.badge .fas.fa-clock').parentElement;
-            timeElement.innerHTML = '<i class="fas fa-clock"></i> ' + moment().format('HH:mm');
-        }, 60000);
-        
-        // Автообновление страницы каждые 30 секунд для dashboard
-        {% if request.endpoint == 'dashboard' %}
-        setInterval(function() {
-            location.reload();
-        }, 30000);
-        {% endif %}
-    </script>
-    
-    {% block scripts %}{% endblock %}
+    {% block extra_js %}{% endblock %}
 </body>
 </html>

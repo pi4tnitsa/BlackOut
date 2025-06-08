@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+
+{% block title %}Workers - Nuclei Controller{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="fas fa-server"></i> Workers</h1>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addWorkerModal">
+                <i class="fas fa-plus"></i> Add Worker
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Workers Table -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Status</th>
+                                <th>Name</th>
+                                <th>IP Address</th>
+                                <th>SSH Port</th>
+                                <th>Username</th>
+                                <th>Last Ping</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for worker in workers %}
+                            <tr>
+                                <td>
+                                    {% if worker.status == 'online' %}
+                                        <span class="badge bg-success"><i class="fas fa-circle"></i> Online</span>
+                                    {% elif worker.status == 'offline' %}
+                                        <span class="badge bg-secondary"><i class="fas fa-circle"></i> Offline</span>
+                                    {% else %}
+                                        <span class="badge bg-danger"><i class="fas fa-exclamation-circle"></i> Error</span>
+                                    {% endif %}
+                                </td>
+                                <td><strong>{{ worker.name }}</strong></td>
+                                <td><code>{{ worker.ip_address }}</code></td>
+                                <td>{{ worker.ssh_port }}</td>
+                                <td>{{ worker.username }}</td>
+                                <td>
+                                    {% if worker.last_ping %}
+                                        {{ worker.last_ping.strftime('%Y-%m-%d %H:%M:%S') }}
+                                    {% else %}
+                                        <span class="text-muted">Never</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-info" onclick="testWorker({{ worker.id }})">
+                                        <i class="fas fa-plug"></i> Test
+                                    </button>
+                                    <button class="btn btn-sm btn-danger" onclick="deleteWorker({{ worker.id }}, '{{ worker.name }}')">
+                                        <i class="fas fa-trash"></i> Delete
+                                    </button>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="7" class="text-center text-muted">
+                                    <i class="fas fa-info-circle"></i> No workers configured yet
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Worker Modal -->
+<div class="modal fade" id="addWorkerModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-plus-circle"></i> Add New Worker</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="addWorkerForm" method="POST" action="/api/workers">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Worker Name</label>
+                        <input type="text" class="form-control" id="name" name="name" required>
+                        <small class="text-muted">A friendly name for this worker</small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="ip_address" class="form-label">IP Address</label>
+                        <input type="text" class="form-control" id="ip_address" name="ip_address" 
+                               pattern="^(\d{1,3}\.){3}\d{1,3}$" required>
+                        <small class="text-muted">The IP address of the Ubuntu server</small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="ssh_port" class="form-label">SSH Port</label>
+                        <input type="number" class="form-control" id="ssh_port" name="ssh_port" 
+                               value="22" min="1" max="65535" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="username" class="form-label">SSH Username</label>
+                        <input type="text" class="form-control" id="username" name="username" required>
+                        <small class="text-muted">Username for SSH connection</small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="password" class="form-label">SSH Password</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                        <small class="text-muted">Password will be encrypted</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save"></i> Add Worker
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+// Add worker form submission
+$('#addWorkerForm').on('submit', function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(this);
+    const submitBtn = $(this).find('button[type="submit"]');
+    
+    submitBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Adding...');
+    
+    $.ajax({
+        url: '/api/workers',
+        type: 'POST',
+        data: formData,
+        processData: false,
+        contentType: false,
+        success: function(response) {
+            $('#addWorkerModal').modal('hide');
+            alert('Worker added successfully!');
+            location.reload();
+        },
+        error: function(xhr) {
+            const error = xhr.responseJSON?.detail || 'Failed to add worker';
+            alert('Error: ' + error);
+        },
+        complete: function() {
+            submitBtn.prop('disabled', false).html('<i class="fas fa-save"></i> Add Worker');
+        }
+    });
+});
+
+// Test worker connection
+function testWorker(workerId) {
+    // TODO: Implement worker connection test
+    alert('Testing worker connection...');
+}
+
+// Delete worker
+function deleteWorker(workerId, workerName) {
+    if (!confirm(`Are you sure you want to delete worker "${workerName}"?`)) {
+        return;
+    }
+    
+    $.ajax({
+        url: `/api/workers/${workerId}`,
+        type: 'DELETE',
+        success: function(response) {
+            alert('Worker deleted successfully!');
+            location.reload();
+        },
+        error: function(xhr) {
+            const error = xhr.responseJSON?.detail || 'Failed to delete worker';
+            alert('Error: ' + error);
+        }
+    });
+}
+</script>
+{% endblock %}

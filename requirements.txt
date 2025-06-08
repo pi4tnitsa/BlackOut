@@ -1,60 +1,15 @@
-# Nuclei Scanner - Python зависимости
-# Основные фреймворки
-Flask==2.3.3
-Flask-SQLAlchemy==3.0.5
-Werkzeug==2.3.7
-
-# База данных
-psycopg2-binary==2.9.7
-SQLAlchemy==2.0.20
-
-# SSH и сетевые операции
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+sqlalchemy==2.0.23
+alembic==1.12.1
 paramiko==3.3.1
-requests==2.31.0
-
-# Работа с IP адресами
-ipaddress==1.0.23
-netaddr==0.8.0
-
-# Веб-сервер
-gunicorn==21.2.0
-gevent==23.7.0
-
-# Фоновые задачи
-celery==5.3.1
-redis==4.6.0
-
-# Конфигурация
+python-jose[cryptography]==3.3.0
+python-multipart==0.0.6
+jinja2==3.1.2
+aiofiles==23.2.1
+psutil==5.9.6
+bcrypt==4.1.1
 python-dotenv==1.0.0
-
-# Планировщик задач
-schedule==1.2.0
-
-# Мониторинг системы
-psutil==5.9.5
-
-# Утилиты
-click==8.1.7
-colorama==0.4.6
-
-# Логирование
-structlog==23.1.0
-
-# Валидация данных
-marshmallow==3.20.1
-
-# Работа с JSON
-orjson==3.9.5
-
-# Криптография
-cryptography==41.0.4
-
-# Дата и время
-python-dateutil==2.8.2
-pytz==2023.3
-
-# Разработка и тестирование (опционально)
-pytest==7.4.2
-pytest-flask==1.2.0
-black==23.7.0
-flake8==6.0.0
+asyncssh==2.14.1
+pydantic==2.5.0
+pydantic-settings==2.1.0

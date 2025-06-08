@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+
+{% block title %}Results - Nuclei Controller{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="fas fa-bug"></i> Results</h1>
+            <div>
+                <button class="btn btn-success" onclick="exportResults('csv')">
+                    <i class="fas fa-file-csv"></i> Export CSV
+                </button>
+                <button class="btn btn-primary" onclick="exportResults('json')">
+                    <i class="fas fa-file-code"></i> Export JSON
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <form id="filterForm" class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label">Severity</label>
+                        <select class="form-select" id="filterSeverity">
+                            <option value="">All</option>
+                            <option value="critical" class="text-danger">Critical</option>
+                            <option value="high" class="text-danger">High</option>
+                            <option value="medium" class="text-warning">Medium</option>
+                            <option value="low" class="text-info">Low</option>
+                            <option value="info" class="text-success">Info</option>
+                        </select>
+                    </div>
+                    
+                    <div class="col-md-3">
+                        <label class="form-label">Protocol</label>
+                        <select class="form-select" id="filterProtocol">
+                            <option value="">All</option>
+                            <option value="http">HTTP</option>
+                            <option value="https">HTTPS</option>
+                            <option value="tcp">TCP</option>
+                            <option value="dns">DNS</option>
+                        </select>
+                    </div>
+                    
+                    <div class="col-md-4">
+                        <label class="form-label">Target Contains</label>
+                        <input type="text" class="form-control" id="filterTarget" 
+                               placeholder="Filter by target...">
+                    </div>
+                    
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="fas fa-filter"></i> Apply Filters
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Results Table -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover" id="resultsTable">
+                        <thead>
+                            <tr>
+                                <th>Severity</th>
+                                <th>Template</th>
+                                <th>Target</th>
+                                <th>Protocol</th>
+                                <th>Matched At</th>
+                                <th>Time</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for result in results %}
+                            <tr data-severity="{{ result.severity }}" 
+                                data-protocol="{{ result.protocol }}"
+                                data-target="{{ result.target }}">
+                                <td>
+                                    {% if result.severity == 'critical' %}
+                                        <span class="badge bg-danger">Critical</span>
+                                    {% elif result.severity == 'high' %}
+                                        <span class="badge bg-danger">High</span>
+                                    {% elif result.severity == 'medium' %}
+                                        <span class="badge bg-warning">Medium</span>
+                                    {% elif result.severity == 'low' %}
+                                        <span class="badge bg-info">Low</span>
+                                    {% else %}
+                                        <span class="badge bg-success">Info</span>
+                                    {% endif %}
+                                </td>
+                                <td><code>{{ result.template_name }}</code></td>
+                                <td>
+                                    <a href="{{ result.matched_at }}" target="_blank" class="text-decoration-none">
+                                        {{ result.target }}
+                                        <i class="fas fa-external-link-alt small"></i>
+                                    </a>
+                                </td>
+                                <td><span class="badge bg-secondary">{{ result.protocol|upper }}</span></td>
+                                <td>{{ result.matched_at }}</td>
+                                <td>{{ result.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                                <td>
+                                    <button class="btn btn-sm btn-info" onclick="viewDetails({{ result.id }})">
+                                        <i class="fas fa-info-circle"></i> Details
+                                    </button>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="7" class="text-center text-muted">
+                                    <i class="fas fa-info-circle"></i> No results found
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Result Details Modal -->
+<div class="modal fade" id="resultDetailsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-info-circle"></i> Result Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="resultDetailsContent">
+                    Loading...
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Apply filters
+$('#filterForm').on('submit', function(e) {
+    e.preventDefault();
+    
+    const severity = $('#filterSeverity').val().toLowerCase();
+    const protocol = $('#filterProtocol').val().toLowerCase();
+    const target = $('#filterTarget').val().toLowerCase();
+    
+    $('#resultsTable tbody tr').each(function() {
+        const row = $(this);
+        const rowSeverity = row.data('severity');
+        const rowProtocol = row.data('protocol');
+        const rowTarget = row.data('target');
+        
+        let show = true;
+        
+        if (severity && rowSeverity !== severity) show = false;
+        if (protocol && rowProtocol !== protocol) show = false;
+        if (target && !rowTarget.toLowerCase().includes(target)) show = false;
+        
+        if (show) {
+            row.show();
+        } else {
+            row.hide();
+        }
+    });
+});
+
+// View result details
+function viewDetails(resultId) {
+    $('#resultDetailsModal').modal('show');
+    
+    // In a real implementation, fetch details from API
+    const detailsHtml = `
+        <div class="alert alert-info">
+            <strong>Result ID:</strong> ${resultId}
+        </div>
+        <p><strong>Note:</strong> Full result details would be loaded here from the API.</p>
+        <p>This would include:</p>
+        <ul>
+            <li>Full template information</li>
+            <li>Request/Response details</li>
+            <li>Extracted data</li>
+            <li>CURL command for reproduction</li>
+            <li>Raw output</li>
+        </ul>
+    `;
+    
+    $('#resultDetailsContent').html(detailsHtml);
+}
+
+// Export results
+function exportResults(format) {
+    window.location.href = `/api/results/export?format=${format}`;
+}
+
+// Highlight based on severity
+$(document).ready(function() {
+    $('#resultsTable tbody tr').each(function() {
+        const severity = $(this).data('severity');
+        if (severity === 'critical' || severity === 'high') {
+            $(this).addClass('table-danger');
+        } else if (severity === 'medium') {
+            $(this).addClass('table-warning');
+        }
+    });
+});
+</script>
+{% endblock %}

@@ -1,209 +1,151 @@
 {% extends "base.html" %}
 
-{% block title %}Задачи сканирования - Nuclei Scanner{% endblock %}
-{% block page_title %}Задачи сканирования{% endblock %}
+{% block title %}Tasks - Nuclei Controller{% endblock %}
 
 {% block content %}
-<div class="row mb-4">
-    <div class="col-md-8">
-        <h4>Управление задачами</h4>
-        <p class="text-muted">Создание и мониторинг задач сканирования</p>
-    </div>
-    <div class="col-md-4 text-end">
-        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createTaskModal">
-            <i class="fas fa-plus"></i> Создать задачу
-        </button>
-    </div>
-</div>
-
-<div class="card">
-    <div class="card-body">
-        {% if tasks %}
-        <div class="table-responsive">
-            <table class="table table-hover">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Название</th>
-                        <th>Цели</th>
-                        <th>Статус</th>
-                        <th>Приоритет</th>
-                        <th>Создано</th>
-                        <th>Действия</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for task in tasks %}
-                    <tr>
-                        <td>{{ task.id }}</td>
-                        <td>
-                            <strong>{{ task.name }}</strong>
-                            <br>
-                            <small class="text-muted">{{ task.created_by }}</small>
-                        </td>
-                        <td>
-                            <span class="badge bg-info">{{ task.target_ips|length }} IP</span>
-                            {% if task.target_ips|length > 0 %}
-                                <br><small class="text-muted">{{ task.target_ips[0] }}{% if task.target_ips|length > 1 %}...{% endif %}</small>
-                            {% endif %}
-                        </td>
-                        <td>
-                            {% if task.status == 'pending' %}
-                                <span class="badge bg-warning">
-                                    <i class="fas fa-clock"></i> Ожидает
-                                </span>
-                            {% elif task.status == 'running' %}
-                                <span class="badge bg-primary">
-                                    <i class="fas fa-spinner"></i> Выполняется
-                                </span>
-                            {% elif task.status == 'completed' %}
-                                <span class="badge bg-success">
-                                    <i class="fas fa-check"></i> Завершена
-                                </span>
-                            {% else %}
-                                <span class="badge bg-danger">
-                                    <i class="fas fa-times"></i> Ошибка
-                                </span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            {% for i in range(task.priority) %}
-                                <i class="fas fa-star text-warning"></i>
-                            {% endfor %}
-                        </td>
-                        <td>
-                            <small class="text-muted">{{ moment(task.created_at).fromNow() }}</small>
-                        </td>
-                        <td>
-                            <div class="btn-group btn-group-sm">
-                                {% if task.status == 'pending' %}
-                                <form method="POST" action="{{ url_for('start_task', task_id=task.id) }}" style="display: inline;">
-                                    <button type="submit" class="btn btn-outline-success" title="Запустить">
-                                        <i class="fas fa-play"></i>
-                                    </button>
-                                </form>
-                                {% endif %}
-                                
-                                <button class="btn btn-outline-info" 
-                                        onclick="viewTaskDetails({{ task.id }})" title="Детали">
-                                    <i class="fas fa-eye"></i>
-                                </button>
-                                
-                                {% if task.status in ['pending', 'running'] %}
-                                <button class="btn btn-outline-warning" 
-                                        onclick="stopTask({{ task.id }})" title="Остановить">
-                                    <i class="fas fa-stop"></i>
-                                </button>
-                                {% endif %}
-                            </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <div class="text-center text-muted py-5">
-            <i class="fas fa-tasks fa-3x mb-3"></i>
-            <h6>Задачи не созданы</h6>
-            <p>Создайте первую задачу сканирования</p>
-            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createTaskModal">
-                <i class="fas fa-plus"></i> Создать задачу
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="fas fa-tasks"></i> Tasks</h1>
+            <button class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#createTaskModal">
+                <i class="fas fa-play"></i> Create Task
             </button>
         </div>
-        {% endif %}
     </div>
 </div>
 
-<!-- Модальное окно создания задачи -->
+<!-- Tasks Table -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Status</th>
+                                <th>Name</th>
+                                <th>Worker</th>
+                                <th>Template</th>
+                                <th>Targets</th>
+                                <th>Progress</th>
+                                <th>Started</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for task in tasks %}
+                            <tr>
+                                <td>
+                                    {% if task.status == 'pending' %}
+                                        <span class="badge bg-secondary"><i class="fas fa-clock"></i> Pending</span>
+                                    {% elif task.status == 'running' %}
+                                        <span class="badge bg-primary"><i class="fas fa-spinner fa-spin"></i> Running</span>
+                                    {% elif task.status == 'completed' %}
+                                        <span class="badge bg-success"><i class="fas fa-check"></i> Completed</span>
+                                    {% else %}
+                                        <span class="badge bg-danger"><i class="fas fa-times"></i> Failed</span>
+                                    {% endif %}
+                                </td>
+                                <td><strong>{{ task.name }}</strong></td>
+                                <td>{{ task.worker.name if task.worker else '-' }}</td>
+                                <td>{{ task.template.name if task.template else '-' }}</td>
+                                <td>{{ task.targets_count }}</td>
+                                <td>
+                                    <div class="progress" style="width: 100px;">
+                                        <div class="progress-bar" role="progressbar" 
+                                             style="width: {{ task.progress }}%">
+                                            {{ task.progress|int }}%
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>
+                                    {% if task.started_at %}
+                                        {{ task.started_at.strftime('%Y-%m-%d %H:%M') }}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if task.status == 'running' %}
+                                        <button class="btn btn-sm btn-info" onclick="viewTaskLogs({{ task.id }})">
+                                            <i class="fas fa-terminal"></i> Logs
+                                        </button>
+                                        <button class="btn btn-sm btn-danger" onclick="stopTask({{ task.id }})">
+                                            <i class="fas fa-stop"></i> Stop
+                                        </button>
+                                    {% elif task.status == 'completed' %}
+                                        <a href="/results?task_id={{ task.id }}" class="btn btn-sm btn-success">
+                                            <i class="fas fa-eye"></i> Results
+                                        </a>
+                                    {% elif task.status == 'failed' %}
+                                        <button class="btn btn-sm btn-warning" onclick="viewError({{ task.id }})">
+                                            <i class="fas fa-exclamation-triangle"></i> Error
+                                        </button>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="8" class="text-center text-muted">
+                                    <i class="fas fa-info-circle"></i> No tasks created yet
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Create Task Modal -->
 <div class="modal fade" id="createTaskModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">
-                    <i class="fas fa-plus"></i> Создать задачу сканирования
-                </h5>
+                <h5 class="modal-title"><i class="fas fa-play-circle"></i> Create New Task</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <form method="POST" action="{{ url_for('create_task') }}">
+            <form id="createTaskForm" method="POST" action="/api/tasks" enctype="multipart/form-data">
                 <div class="modal-body">
-                    <div class="row">
-                        <div class="col-md-8">
-                            <div class="mb-3">
-                                <label for="name" class="form-label">Название задачи</label>
-                                <input type="text" class="form-control" id="name" name="name" 
-                                       placeholder="Сканирование сети офиса" required>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="mb-3">
-                                <label for="priority" class="form-label">Приоритет</label>
-                                <select class="form-select" id="priority" name="priority">
-                                    <option value="1">Низкий</option>
-                                    <option value="2" selected>Средний</option>
-                                    <option value="3">Высокий</option>
-                                    <option value="4">Критичный</option>
-                                </select>
-                            </div>
-                        </div>
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Task Name</label>
+                        <input type="text" class="form-control" id="name" name="name" required>
+                        <small class="text-muted">A descriptive name for this scan task</small>
                     </div>
                     
                     <div class="mb-3">
-                        <label for="targets" class="form-label">Целевые IP адреса</label>
-                        <textarea class="form-control font-monospace" id="targets" name="targets" rows="4" 
-                                  placeholder="192.168.1.1&#10;192.168.1.0/24&#10;10.0.0.1-10.0.0.100" required></textarea>
-                        <div class="form-text">
-                            Поддерживаемые форматы: одиночные IP, CIDR блоки, диапазоны IP адресов
-                        </div>
-                    </div>
-                    
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="templates" class="form-label">Шаблоны сканирования</label>
-                                <select class="form-select" id="templates" name="templates" multiple size="6">
-                                    {% for template in templates %}
-                                    <option value="{{ template.template_id }}">
-                                        {{ template.name or template.template_id }} 
-                                        ({{ template.severity or 'unknown' }})
-                                    </option>
-                                    {% endfor %}
-                                    <option value="" selected>Все шаблоны по умолчанию</option>
-                                </select>
-                                <div class="form-text">
-                                    Удерживайте Ctrl для выбора нескольких шаблонов
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="servers" class="form-label">Серверы для выполнения</label>
-                                <select class="form-select" id="servers" name="servers" multiple size="6" required>
-                                    {% for server in servers %}
-                                    <option value="{{ server.id }}" selected>
-                                        {{ server.hostname }} ({{ server.ip_address }})
-                                    </option>
-                                    {% endfor %}
-                                </select>
-                                <div class="form-text">
-                                    Выберите серверы для распределения нагрузки
-                                </div>
-                            </div>
-                        </div>
+                        <label for="template_id" class="form-label">Template</label>
+                        <select class="form-select" id="template_id" name="template_id" required>
+                            <option value="">Select a template...</option>
+                            {% for template in templates %}
+                                <option value="{{ template.id }}">{{ template.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <small class="text-muted">Choose the Nuclei template to use</small>
                     </div>
                     
                     <div class="mb-3">
-                        <label for="schedule_time" class="form-label">Запланированное время (опционально)</label>
-                        <input type="datetime-local" class="form-control" id="schedule_time" name="schedule_time">
-                        <div class="form-text">
-                            Оставьте пустым для немедленного выполнения
-                        </div>
+                        <label for="targets_file" class="form-label">Targets File</label>
+                        <input type="file" class="form-control" id="targets_file" name="targets_file" 
+                               accept=".txt" required>
+                        <small class="text-muted">
+                            Text file with one target per line (IP addresses or domains)
+                        </small>
+                    </div>
+                    
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i> 
+                        <strong>Note:</strong> The task will be automatically assigned to an available worker
+                        and will start immediately after creation.
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="submit" class="btn btn-primary">
-                        <i class="fas fa-plus"></i> Создать задачу
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning">
+                        <i class="fas fa-play"></i> Create & Start
                     </button>
                 </div>
             </form>
@@ -211,100 +153,135 @@
     </div>
 </div>
 
-<!-- Модальное окно деталей задачи -->
-<div class="modal fade" id="taskDetailsModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
+<!-- Task Logs Modal -->
+<div class="modal fade" id="taskLogsModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">
-                    <i class="fas fa-eye"></i> Детали задачи
-                </h5>
+                <h5 class="modal-title"><i class="fas fa-terminal"></i> Task Logs</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body" id="taskDetailsContent">
-                Загрузка деталей...
+            <div class="modal-body">
+                <pre id="logsContent" class="bg-dark text-light p-3" style="height: 400px; overflow-y: auto;">
+Loading logs...
+                </pre>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                <button type="button" class="btn btn-secondary" onclick="refreshLogs()">
+                    <i class="fas fa-sync"></i> Refresh
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
     </div>
 </div>
-{% endblock %}
 
-{% block scripts %}
 <script>
-function viewTaskDetails(taskId) {
-    const modal = new bootstrap.Modal(document.getElementById('taskDetailsModal'));
-    modal.show();
+let currentTaskId = null;
+let autoRefreshInterval = null;
+
+// Create task form submission
+$('#createTaskForm').on('submit', function(e) {
+    e.preventDefault();
     
-    // В реальной системе здесь был бы AJAX запрос для получения деталей
-    document.getElementById('taskDetailsContent').innerHTML = `
-        <div class="row">
-            <div class="col-md-6">
-                <h6>Основная информация</h6>
-                <table class="table table-sm">
-                    <tr><td>ID задачи:</td><td>${taskId}</td></tr>
-                    <tr><td>Статус:</td><td><span class="badge bg-primary">Выполняется</span></td></tr>
-                    <tr><td>Прогресс:</td><td>
-                        <div class="progress">
-                            <div class="progress-bar" style="width: 65%">65%</div>
-                        </div>
-                    </td></tr>
-                    <tr><td>Обработано IP:</td><td>65 из 100</td></tr>
-                    <tr><td>Найдено уязвимостей:</td><td>3</td></tr>
-                </table>
-            </div>
-            <div class="col-md-6">
-                <h6>Параметры сканирования</h6>
-                <table class="table table-sm">
-                    <tr><td>Целевые IP:</td><td>192.168.1.0/24</td></tr>
-                    <tr><td>Шаблоны:</td><td>Все по умолчанию</td></tr>
-                    <tr><td>Серверы:</td><td>2 воркера</td></tr>
-                    <tr><td>Приоритет:</td><td>⭐⭐ Средний</td></tr>
-                </table>
-            </div>
-        </div>
-        <div class="mt-3">
-            <h6>Лог выполнения</h6>
-            <pre class="bg-dark text-light p-3 rounded" style="height: 200px; overflow-y: auto;">
-[${new Date().toISOString()}] Задача ${taskId} запущена
-[${new Date().toISOString()}] Распределение целей по серверам...
-[${new Date().toISOString()}] Сервер nuclei-worker-01: 50 IP адресов
-[${new Date().toISOString()}] Сервер nuclei-worker-02: 50 IP адресов  
-[${new Date().toISOString()}] Начало сканирования...
-[${new Date().toISOString()}] Найдена уязвимость: CVE-2023-1234 на 192.168.1.15
-[${new Date().toISOString()}] Найдена уязвимость: SQL injection на 192.168.1.23
-[${new Date().toISOString()}] Обработано 65 из 100 IP адресов...</pre>
-        </div>
-    `;
-}
-
-function stopTask(taskId) {
-    if (confirm('Остановить выполнение задачи?')) {
-        // В реальной системе здесь был бы AJAX запрос
-        alert(`Задача ${taskId} остановлена`);
-        location.reload();
-    }
-}
-
-// Автообновление списка задач каждые 15 секунд
-setInterval(() => {
-    const runningTasks = document.querySelectorAll('.badge.bg-primary').length;
-    if (runningTasks > 0) {
-        location.reload();
-    }
-}, 15000);
-
-// Установка минимального времени для планирования (текущее время + 5 минут)
-document.addEventListener('DOMContentLoaded', function() {
-    const scheduleInput = document.getElementById('schedule_time');
-    const now = new Date();
-    now.setMinutes(now.getMinutes() + 5);
-    scheduleInput.min = now.toISOString().slice(0, 16);
+    const formData = new FormData(this);
+    const submitBtn = $(this).find('button[type="submit"]');
+    
+    submitBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Creating...');
+    
+    $.ajax({
+        url: '/api/tasks',
+        type: 'POST',
+        data: formData,
+        processData: false,
+        contentType: false,
+        success: function(response) {
+            $('#createTaskModal').modal('hide');
+            alert('Task created and started successfully!');
+            location.reload();
+        },
+        error: function(xhr) {
+            const error = xhr.responseJSON?.detail || 'Failed to create task';
+            alert('Error: ' + error);
+        },
+        complete: function() {
+            submitBtn.prop('disabled', false).html('<i class="fas fa-play"></i> Create & Start');
+        }
+    });
 });
 
-// Настройка moment.js
-moment.locale('ru');
+// View task logs
+function viewTaskLogs(taskId) {
+    currentTaskId = taskId;
+    $('#taskLogsModal').modal('show');
+    refreshLogs();
+    
+    // Auto-refresh logs every 5 seconds
+    autoRefreshInterval = setInterval(refreshLogs, 5000);
+}
+
+// Refresh logs
+function refreshLogs() {
+    if (!currentTaskId) return;
+    
+    $.ajax({
+        url: `/api/tasks/${currentTaskId}/status`,
+        type: 'GET',
+        success: function(response) {
+            const logs = response.log_tail || 'No logs available';
+            $('#logsContent').text(logs);
+            
+            // Auto-scroll to bottom
+            const logsElement = document.getElementById('logsContent');
+            logsElement.scrollTop = logsElement.scrollHeight;
+        }
+    });
+}
+
+// Stop task
+function stopTask(taskId) {
+    if (!confirm('Are you sure you want to stop this task?')) {
+        return;
+    }
+    
+    $.ajax({
+        url: `/api/tasks/${taskId}/stop`,
+        type: 'POST',
+        success: function(response) {
+            alert('Task stopped successfully!');
+            location.reload();
+        },
+        error: function(xhr) {
+            const error = xhr.responseJSON?.detail || 'Failed to stop task';
+            alert('Error: ' + error);
+        }
+    });
+}
+
+// View error
+function viewError(taskId) {
+    $.ajax({
+        url: `/api/tasks/${taskId}/status`,
+        type: 'GET',
+        success: function(response) {
+            alert('Task Error:\n\n' + (response.error_message || 'Unknown error'));
+        }
+    });
+}
+
+// Clean up interval on modal close
+$('#taskLogsModal').on('hidden.bs.modal', function() {
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+    }
+});
+
+// Auto-refresh page every 10 seconds if there are running tasks
+{% if tasks|selectattr("status", "equalto", "running")|list %}
+setInterval(function() {
+    location.reload();
+}, 10000);
+{% endif %}
 </script>
 {% endblock %}
