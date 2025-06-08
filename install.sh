@@ -21,37 +21,46 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Определяем директорию скрипта
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
 # Установка системных зависимостей
-echo -e "${YELLOW}[1/7] Установка системных пакетов...${NC}"
+echo -e "${YELLOW}[1/8] Установка системных пакетов...${NC}"
 apt-get update
 apt-get install -y python3 python3-pip python3-venv unzip unrar screen git curl
 
 # Создание директории проекта
 PROJECT_DIR="/opt/nuclei-controller"
-echo -e "${YELLOW}[2/7] Создание директории проекта...${NC}"
+echo -e "${YELLOW}[2/8] Создание директории проекта...${NC}"
 mkdir -p $PROJECT_DIR
 cd $PROJECT_DIR
 
+# Копирование файлов проекта
+echo -e "${YELLOW}[3/8] Копирование файлов проекта...${NC}"
+cp -r $SCRIPT_DIR/* $PROJECT_DIR/ || true
+rm -f $PROJECT_DIR/install.sh  # Удаляем сам скрипт установки
+
 # Создание виртуального окружения
-echo -e "${YELLOW}[3/7] Создание виртуального окружения Python...${NC}"
+echo -e "${YELLOW}[4/8] Создание виртуального окружения Python...${NC}"
 python3 -m venv venv
 source venv/bin/activate
 
 # Установка Python зависимостей
-echo -e "${YELLOW}[4/7] Установка Python пакетов...${NC}"
+echo -e "${YELLOW}[5/8] Установка Python пакетов...${NC}"
 pip install --upgrade pip
 pip install fastapi uvicorn sqlalchemy alembic paramiko python-jose[cryptography] \
-    python-multipart jinja2 aiofiles psutil bcrypt python-dotenv
+    python-multipart jinja2 aiofiles psutil bcrypt python-dotenv pydantic-settings \
+    sqlalchemy-utils
 
 # Создание структуры директорий
-echo -e "${YELLOW}[5/7] Создание структуры проекта...${NC}"
+echo -e "${YELLOW}[6/8] Создание структуры проекта...${NC}"
 mkdir -p modules static/css static/js templates uploads/templates uploads/targets worker_scripts
 
 # Генерация случайного пароля для админа
 ADMIN_PASSWORD=$(openssl rand -base64 12)
 
 # Создание .env файла
-echo -e "${YELLOW}[6/7] Создание конфигурации...${NC}"
+echo -e "${YELLOW}[7/8] Создание конфигурации...${NC}"
 cat > .env << EOF
 SECRET_KEY=$(openssl rand -hex 32)
 DATABASE_URL=sqlite:///./nuclei_controller.db
@@ -61,14 +70,16 @@ HOST=0.0.0.0
 PORT=8000
 EOF
 
-# Инициализация базы данных и запуск
-echo -e "${YELLOW}[7/7] Инициализация базы данных...${NC}"
-python3 -c "
-import sys
-sys.path.append('.')
+# Инициализация базы данных
+echo -e "${YELLOW}[8/8] Инициализация базы данных...${NC}"
+cd $PROJECT_DIR
+cat > init_db.py << EOF
 from database import init_db
-init_db()
-"
+if __name__ == '__main__':
+    init_db()
+EOF
+$PROJECT_DIR/venv/bin/python3 init_db.py
+rm init_db.py
 
 # Создание systemd сервиса
 cat > /etc/systemd/system/nuclei-controller.service << EOF
